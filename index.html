@@ -325,7 +325,8 @@
         initYouTube();
     }
 
-    function initYouTube() {
+function initYouTube() {
+        // 修正箇所1：スクリプトのURLは公式の標準（www.youtube.com）に戻す
         if (!window.YT) { const tag = document.createElement('script'); tag.src = "https://www.youtube.com/iframe_api"; document.body.appendChild(tag); } 
         else { onYouTubeIframeAPIReady(); }
     }
@@ -337,8 +338,8 @@
 
         player = new YT.Player('player', {
             height: '100%', width: '100%', videoId: 'dQw4w9WgXcQ',
+            // 修正箇所2：プレイヤーの「通信先」だけをnocookieに固定する
             host: 'https://www.youtube-nocookie.com',
-/* 修正箇所：window.onYouTubeIframeAPIReady 内の playerVars */
             playerVars: { 
                 'controls': 0,
                 'disablekb': 1,
@@ -351,8 +352,7 @@
                 'playsinline': 1,
                 'iv_load_policy': 3,
                 'modestbranding': 1,
-                'cc_load_policy': 0,
-                'adunit': 'none',
+                'cc_load_policy': 0
             },
             events: { 
                 'onReady': () => listenToSignals(),
