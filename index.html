@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>INTRO DON! - Stable Edition</title>
+    <title>INTRO DON! - testver</title>
     <style>
         :root { --primary-color: #007bff; --admin-color: #ff4757; --bg-color: #0f0f0f; --gold: #ffd700; --my-name-color: #00d4ff; --success-green: #28a745; }
         body { font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif; margin: 0; background: var(--bg-color); color: #fff; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -330,43 +330,39 @@
         else { onYouTubeIframeAPIReady(); }
     }
 
-/* 修正箇所：initYouTube内の playerVars 設定 */
-window.onYouTubeIframeAPIReady = () => {
-    if (player) return;
-    const origin = window.location.origin;
+    window.onYouTubeIframeAPIReady = () => {
+        if (player) return;
+        let origin = window.location.protocol + '//' + window.location.hostname;
+        if (window.location.port) origin += ':' + window.location.port;
 
-    player = new YT.Player('player', {
-        height: '100%', width: '100%', videoId: 'dQw4w9WgXcQ',
-        // 広告なしドメインの使用
-        host: 'https://www.youtube-nocookie.com',
-        playerVars: { 
-            'autoplay': 1,
-            'controls': 0,
-            'disablekb': 1,
-            'rel': 0,
-            // 以下の3つが広告抑制に重要
-            'origin': origin,
-            'widget_referrer': origin,
-            'iv_load_policy': 3, 
-            'modestbranding': 1,
-            'showinfo': 0,
-            'fs': 0,
-            'autohide': 1,
-            'enablejsapi': 1,
-            'cc_load_policy': 0
-        },
-        events: { 
-            'onReady': (e) => {
-                e.target.mute();
-                listenToSignals();
+        player = new YT.Player('player', {
+            height: '100%', width: '100%', videoId: 'dQw4w9WgXcQ',
+            host: 'https://www.youtube-nocookie.com',
+            playerVars: { 
+                'controls': 0,
+                'disablekb': 1,
+                'rel': 0,
+                'autoplay': 1,
+                'mute': 1,
+                'origin': origin,
+                'enablejsapi': 1,
+                'widget_referrer': origin,
+                'playsinline': 1,
+                'iv_load_policy': 3,
+                'modestbranding': 1,
+                'cc_load_policy': 0,
+                'adunit': 'none',
+                'playlist': data.videoId // 自身のIDをプレイリストに入れることで、広告の発生を抑える手法
             },
-            'onError': (e) => {
-                document.getElementById('error-message').style.display = "block";
-                window.isCurrentVideoError = true;
+            events: { 
+                'onReady': () => listenToSignals(),
+                'onError': (e) => {
+                    document.getElementById('error-message').style.display = "block";
+                    window.isCurrentVideoError = true;
+                }
             }
-        }
-    });
-};
+        });
+    };
 
     const updateVolumeUI = (val) => {
         const ratio = quizInfo.volumeRatio || 1.0;
@@ -396,9 +392,8 @@ window.onYouTubeIframeAPIReady = () => {
 
             if(data.videoId && data.videoId !== lastVideoId) {
                 lastVideoId = data.videoId;
-                if (player && player.loadVideoById) {
-                    player.loadVideoById({ videoId: data.videoId, startSeconds: data.startTimeOffset || 0 });
-                    player.pauseVideo();
+                if (player && player.cueVideoById) {
+                    player.cueVideoById({ videoId: data.videoId, startSeconds: data.startTimeOffset || 0 });
                 }
                 document.getElementById('error-message').style.display = "none";
                 window.isCurrentVideoError = false;
