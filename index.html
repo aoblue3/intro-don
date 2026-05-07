@@ -330,41 +330,43 @@
         else { onYouTubeIframeAPIReady(); }
     }
 
-    window.onYouTubeIframeAPIReady = () => {
-        if (player) return;
-        const origin = window.location.origin;
+/* 修正箇所：initYouTube内の playerVars 設定 */
+window.onYouTubeIframeAPIReady = () => {
+    if (player) return;
+    const origin = window.location.origin;
 
-        player = new YT.Player('player', {
-            height: '100%', width: '100%', videoId: 'dQw4w9WgXcQ',
-            host: 'https://www.youtube-nocookie.com',
-            playerVars: { 
-                'autoplay': 1,
-                'controls': 0,
-                'disablekb': 1,
-                'rel': 0,
-                'origin': origin,
-                'widget_referrer': origin,
-                'playsinline': 1,
-                'iv_load_policy': 3,
-                'modestbranding': 1,
-                'showinfo': 0,
-                'fs': 0,
-                'autohide': 1,
-                'enablejsapi': 1,
-                'cc_load_policy': 0
+    player = new YT.Player('player', {
+        height: '100%', width: '100%', videoId: 'dQw4w9WgXcQ',
+        // 広告なしドメインの使用
+        host: 'https://www.youtube-nocookie.com',
+        playerVars: { 
+            'autoplay': 1,
+            'controls': 0,
+            'disablekb': 1,
+            'rel': 0,
+            // 以下の3つが広告抑制に重要
+            'origin': origin,
+            'widget_referrer': origin,
+            'iv_load_policy': 3, 
+            'modestbranding': 1,
+            'showinfo': 0,
+            'fs': 0,
+            'autohide': 1,
+            'enablejsapi': 1,
+            'cc_load_policy': 0
+        },
+        events: { 
+            'onReady': (e) => {
+                e.target.mute();
+                listenToSignals();
             },
-            events: { 
-                'onReady': (e) => {
-                    e.target.mute();
-                    listenToSignals();
-                },
-                'onError': (e) => {
-                    document.getElementById('error-message').style.display = "block";
-                    window.isCurrentVideoError = true;
-                }
+            'onError': (e) => {
+                document.getElementById('error-message').style.display = "block";
+                window.isCurrentVideoError = true;
             }
-        });
-    };
+        }
+    });
+};
 
     const updateVolumeUI = (val) => {
         const ratio = quizInfo.volumeRatio || 1.0;
