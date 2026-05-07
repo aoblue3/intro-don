@@ -254,14 +254,15 @@
             },
             events: { 
                 'onReady': () => listenToSignals(),
-                'onStateChange': (e) => {
-                    // 広告検知ロジック
-                    const isAd = player.getAdStats && player.getAdStats(); // 一部の環境で有効
+'onStateChange': (e) => {
+                    const isAd = player.getAdStats && player.getAdStats();
                     const isAdState = (e.data === -1 || (e.data === 3 && player.getCurrentTime() === 0));
                     
                     if (isAd || isAdState) {
                         if(myId) set(ref(db, `game/ads/${myId}`), myName);
-                        // 参加者のガードを外す
+                        // 広告中のユーザーのみ、再生を強制して広告を消化させる
+                        player.playVideo();
+                        player.unMute();
                         if(!isAdmin) {
                             document.getElementById('click-guard').style.display = "none";
                             document.getElementById('video-cover').style.opacity = "0.3";
@@ -271,6 +272,8 @@
                         if(!isAdmin) {
                             document.getElementById('click-guard').style.display = "block";
                             document.getElementById('video-cover').style.opacity = "1";
+                            // 広告終了後は一旦止める（主催者の合図を待つため）
+                            if(!isRevealedGlobal) player.pauseVideo();
                         }
                     }
                 },
@@ -617,14 +620,7 @@
         document.getElementById('mute-btn').onclick = toggleMute;
         document.getElementById('volume-slider').oninput = (e) => updateVolumeUI(e.target.value);
 
-        const triggerPlayWithCountdown = async (sec) => {
-            // 誰かが広告中の場合は開始不可（主催者のミス防止）
-            const adSnap = await get(ref(db, 'game/ads'));
-            if (adSnap.exists()) {
-                alert("広告中のユーザーがいるため開始できません");
-                return;
-            }
-
+const triggerPlayWithCountdown = async (sec) => {
             const startNum = isFirstPlayOfRound ? 3 : 1;
             for(let i = startNum; i >= 1; i--) {
                 await set(ref(db, 'game/signal'), { type: 'countdown', value: i, duration: sec, time: Date.now() });
