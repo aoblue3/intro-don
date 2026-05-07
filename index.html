@@ -332,16 +332,17 @@
 
     window.onYouTubeIframeAPIReady = () => {
         if (player) return;
-        let origin = window.location.protocol + '//' + window.location.hostname;
-        if (window.location.port) origin += ':' + window.location.port;
+        const origin = window.location.origin;
 
         player = new YT.Player('player', {
             height: '100%', width: '100%', videoId: 'dQw4w9WgXcQ',
             host: 'https://www.youtube-nocookie.com',
             playerVars: { 
-                'controls': 0, 'disablekb': 1, 'rel': 0, 'autoplay': 1, 'mute': 1,
+                'autoplay': 1,
+                'controls': 0,
+                'disablekb': 1,
+                'rel': 0,
                 'origin': origin,
-                'enablejsapi': 1,
                 'widget_referrer': origin,
                 'playsinline': 1,
                 'iv_load_policy': 3,
@@ -349,11 +350,14 @@
                 'showinfo': 0,
                 'fs': 0,
                 'autohide': 1,
-                'cc_load_policy': 0,
-                'adunit': 'none'
+                'enablejsapi': 1,
+                'cc_load_policy': 0
             },
             events: { 
-                'onReady': () => listenToSignals(),
+                'onReady': (e) => {
+                    e.target.mute();
+                    listenToSignals();
+                },
                 'onError': (e) => {
                     document.getElementById('error-message').style.display = "block";
                     window.isCurrentVideoError = true;
@@ -390,8 +394,9 @@
 
             if(data.videoId && data.videoId !== lastVideoId) {
                 lastVideoId = data.videoId;
-                if (player && player.cueVideoById) {
-                    player.cueVideoById({ videoId: data.videoId, startSeconds: data.startTimeOffset || 0 });
+                if (player && player.loadVideoById) {
+                    player.loadVideoById({ videoId: data.videoId, startSeconds: data.startTimeOffset || 0 });
+                    player.pauseVideo();
                 }
                 document.getElementById('error-message').style.display = "none";
                 window.isCurrentVideoError = false;
