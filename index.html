@@ -2,47 +2,86 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>INTRO DON!</title>
+    <title>INTRO DON! - Stable Edition</title>
     <style>
         :root { --primary-color: #007bff; --admin-color: #ff4757; --bg-color: #0f0f0f; --gold: #ffd700; --my-name-color: #00d4ff; --success-green: #28a745; }
         body { font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif; margin: 0; background: var(--bg-color); color: #fff; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        
+        /* セットアップ画面 */
         #setup-screen { position: fixed; inset: 0; background: var(--bg-color); z-index: 9999; display: flex; align-items: center; justify-content: center; }
         .setup-box { background: #fff; color: #333; padding: 40px; border-radius: 20px; text-align: center; width: 340px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
         .btn-join { width: 100%; padding: 12px; background: var(--primary-color); color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; transition: 0.2s; margin-bottom: 10px; }
         .admin-login-link { cursor: pointer; color: #666; font-size: 13px; margin-top: 15px; text-decoration: underline; display: block; }
-        #admin-panel { background: #000; padding: 12px; display: none; border-bottom: 2px solid var(--admin-color); z-index: 1000; }
+
+        /* 管理パネル */
+        #admin-panel { background: #000; padding: 12px; display: none; border-bottom: 2px solid var(--admin-color); z-index: 1000; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
         .admin-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
         .admin-btn { background: var(--admin-color); color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px; }
         #reserve-area { flex: 1; height: 50px; background: #222; color: #0f0; border: 1px solid #444; border-radius: 4px; font-family: monospace; font-size: 11px; padding: 5px; }
         #admin-seekbar { flex: 1; min-width: 150px; cursor: pointer; }
+
+        /* メインレイアウト */
         #main-game { display: none; flex: 1; overflow: hidden; }
         #video-section { flex: 7; position: relative; background: #000; display: flex; flex-direction: column; }
+        
         #player-wrapper { flex: 1; position: relative; background: #000; overflow: hidden; }
         #player { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
         #click-guard { position: absolute; inset: 0; z-index: 15; background: transparent; }
         #video-cover { position: absolute; inset: 0; background: radial-gradient(circle, #222 0%, #000 100%); z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+
+        /* カウントダウン表示 */
         #countdown-container { display: none; position: relative; width: 250px; height: 250px; align-items: center; justify-content: center; }
         #countdown-circle { position: absolute; inset: 0; border: 6px solid rgba(255, 255, 255, 0.2); border-radius: 50%; }
-        #countdown-line { position: absolute; inset: -3px; border: 6px solid transparent; border-top: 6px solid #fff; border-radius: 50%; z-index: 10; }
-        #countdown-display { font-size: 10rem; font-weight: bold; color: #fff; z-index: 5; }
-        #play-sec-preview { color: #fff; font-weight: bold; font-size: 1.5rem; margin-bottom: 20px; }
+        
+        #countdown-line {
+            position: absolute;
+            inset: -3px;
+            border: 6px solid transparent;
+            border-top: 6px solid #fff;
+            border-radius: 50%;
+            z-index: 10;
+        }
+
+        #countdown-display { font-size: 10rem; font-weight: bold; color: #fff; z-index: 5; text-shadow: 0 0 20px rgba(0,0,0,0.8); }
+        #play-sec-preview { color: #fff; font-weight: bold; font-size: 1.5rem; margin-bottom: 20px; text-transform: uppercase; letter-spacing: 2px; }
+
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
         #screen-chat-overlay { position: absolute; inset: 0; z-index: 30; pointer-events: none; overflow: hidden; }
         .danmaku { position: absolute; white-space: nowrap; font-size: 2rem; font-weight: bold; color: #fff; text-shadow: 2px 2px 4px #000; left: 100%; animation: scrollLeft 4s linear forwards; }
         @keyframes scrollLeft { from { left: 100%; } to { left: -150%; } }
-        #fastest-ranking { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 80%; max-width: 500px; display: none; z-index: 100; border: 2px solid var(--gold); background: rgba(0,0,0,0.95); border-radius: 15px; padding: 20px; }
-        .rank-item { display: flex; justify-content: space-between; padding: 12px; border-bottom: 1px solid #333; font-size: 1.2rem; }
-        .rank-item.is-1st { color: var(--gold); font-weight: bold; }
+        
+        #fastest-ranking { 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+            width: 80%; max-width: 500px; display: none; z-index: 100; 
+            border: 2px solid var(--gold); background: rgba(0,0,0,0.95); 
+            border-radius: 15px; padding: 20px; box-shadow: 0 0 50px rgba(255,215,0,0.3); 
+        }
+
+        .rank-item { opacity: 0; transform: translateY(20px); transition: all 0.4s ease; display: flex; justify-content: space-between; padding: 12px; border-bottom: 1px solid #333; font-size: 1.2rem; }
+        .rank-item.show { opacity: 1; transform: translateY(0); }
+        .rank-item.is-1st { color: var(--gold); font-weight: bold; font-size: 1.5rem; border-bottom: 2px solid var(--gold); }
+
+        @keyframes winner-pulse { 0% { box-shadow: 0 0 10px var(--gold); } 50% { box-shadow: 0 0 40px var(--gold); } 100% { box-shadow: 0 0 10px var(--gold); } }
+        .winner-anim { animation: winner-pulse 1s infinite; }
         #sidebar { flex: 2; background: #1a1a1a; border-left: 1px solid #333; display: flex; flex-direction: column; min-width: 250px; }
         #user-list { flex: 1; padding: 10px; overflow-y: auto; }
         .user-card { display: flex; align-items: center; justify-content: space-between; background: #2a2a2a; padding: 10px 15px; border-radius: 8px; margin-bottom: 6px; font-size: 14px; }
-        .user-card.is-me { border: 2px solid var(--my-name-color); }
-        .user-card.is-admin { border: 2px solid var(--admin-color); }
-        #input-area { padding: 15px; background: #1a1a1a; display: flex; gap: 10px; border-top: 1px solid #333; position: relative; }
+        .user-card.is-me { border: 2px solid var(--my-name-color); background: #1a3a4a; }
+        .user-card.is-admin { border: 2px solid var(--admin-color); background: #3a1a1a; }
+        
+        .crown { color: var(--gold); margin-right: 4px; }
+        .correct-mark { background: var(--success-green); color: white; font-size: 10px; padding: 2px 5px; border-radius: 4px; margin-left: 5px; }
+
+        #input-area { padding: 15px; background: #1a1a1a; display: flex; gap: 10px; border-top: 1px solid #333; align-items: center; z-index: 50; position: relative; }
         #answer-input { flex: 1; padding: 12px 20px; border-radius: 25px; border: 2px solid #444; background: #333; color: #fff; outline: none; }
-        #result-notice { position: absolute; top: -30px; left: 20px; font-weight: bold; display: none; }
+        #result-notice { position: absolute; top: -30px; left: 20px; font-weight: bold; display: none; z-index: 60; }
+        
         .volume-controls { display: flex; align-items: center; gap: 8px; min-width: 140px; }
-        #volume-slider { width: 80px; cursor: pointer; }
+        #volume-slider { accent-color: var(--primary-color); width: 80px; cursor: pointer; }
+
+        /* 管理者以外にはエラーメッセージを非表示 */
+        body:not(.is-admin-mode) #error-message { display: none !important; }
     </style>
 </head>
 <body>
@@ -60,14 +99,19 @@
     <div class="admin-row">
         <span id="admin-round-text" style="color:var(--gold); font-weight:bold; margin-right:10px;">Round: 0</span>
         <button class="admin-btn" id="btn-play-1">1s</button>
+        <button class="admin-btn" id="btn-play-1-5">1.5s</button>
         <button class="admin-btn" id="btn-play-2">2s</button>
+        <button class="admin-btn" id="btn-play-2-5">2.5s</button>
         <button class="admin-btn" id="btn-play-3">3s</button>
         <button class="admin-btn" id="btn-play-5">5s</button>
+        <button class="admin-btn" id="btn-play-10">10s</button>
         ｜ <button class="admin-btn" id="btn-reveal" style="background:#28a745">答え表示</button>
         ｜ <button class="admin-btn" id="btn-toggle-rank" style="background:var(--gold); color:#000;">早解き表示</button>
-        <button class="admin-btn" id="btn-video-on">画面ON</button>
-        <button class="admin-btn" id="btn-video-off">画面OFF</button>
+        <button class="admin-btn" id="btn-video-on" style="background:#007bff">画面ON</button>
+        <button class="admin-btn" id="btn-video-off" style="background:#666">画面OFF</button>
+        ｜ <button class="admin-btn" id="btn-reset-all" style="background:#444">全リセット</button>
         ｜ <input type="range" id="admin-seekbar" min="0" max="100" value="0">
+        <span id="admin-time-display" style="color:#0f0; font-size:12px; font-family:monospace; min-width:35px;">0:00</span>
     </div>
     <div class="admin-row">
         <textarea id="reserve-area" placeholder="URL 曲名 アーティスト"></textarea>
@@ -83,11 +127,13 @@
             <div style="text-align:center; color:var(--gold); font-weight:bold; border-bottom:2px solid var(--gold); padding-bottom:5px; margin-bottom:10px;">FASTEST CORRECT ANSWERS</div>
             <div id="rank-list"></div>
         </div>
+        
         <div id="player-wrapper">
             <div id="click-guard"></div>
             <div id="video-cover">
                 <div id="round-text" style="color:var(--primary-color); font-weight:bold; font-size: 1.2rem; margin-bottom: 10px;">ROUND 0</div>
-                <div id="play-sec-preview" style="display: none;"></div>
+                <div id="play-sec-preview" style="display: none;">再生時間: 0秒</div>
+                <div id="error-message" style="display:none; color:#ff4757; font-weight:bold; font-size:1.5rem; margin-bottom:10px;">動画が読み込めません</div>
                 <div id="countdown-container">
                     <div id="countdown-circle"></div>
                     <div id="countdown-line"></div>
@@ -97,6 +143,7 @@
             </div>
             <div id="player"></div>
         </div>
+
         <div id="input-area">
             <div id="result-notice"></div>
             <input type="text" id="answer-input" placeholder="答えを入力！">
@@ -108,6 +155,7 @@
             </div>
         </div>
     </div>
+    
     <div id="sidebar">
         <div style="padding:15px; font-size:11px; color:#aaa; display:flex; justify-content:space-between;">
             <span>RANKING</span>
@@ -136,26 +184,44 @@
     let player, myName = "", myId = "", isAdmin = false;
     let quizInfo = { title: "", artist: "", round: 0 };
     let hasPointedTitle = false, hasPointedArtist = false, isRevealedGlobal = false;
-    let lastVolume = 50, isMuted = false, lastVideoId = "";
+    let roundPointsEarned = 0;
+    let lastVolume = 50, isMuted = false, currentRankingVisible = false;
+    let lastVideoId = ""; 
+    let isFirstPlayOfRound = true;
 
     const prepareJoin = async (role) => {
-        const input = document.getElementById('user-name');
-        let baseName = input.value.trim();
-        if(!baseName) return alert("お名前を入力してください");
-        myId = role === 'admin' ? "admin_master" : (localStorage.getItem('intro_don_uid') || 'u_' + Math.random().toString(36).substr(2, 9));
-        localStorage.setItem('intro_don_uid', myId);
-        myName = baseName;
-        joinGame(role);
+        try {
+            const input = document.getElementById('user-name');
+            let baseName = input.value.trim();
+            if(!baseName) return alert("お名前を入力してください");
+            if(role === 'admin') { myId = "admin_master"; myName = baseName; } 
+            else {
+                myId = localStorage.getItem('intro_don_uid') || 'u_' + Math.random().toString(36).substr(2, 9);
+                localStorage.setItem('intro_don_uid', myId);
+                const usersSnap = await get(ref(db, 'game/users'));
+                let finalName = baseName;
+                if(usersSnap.exists()){
+                    const users = usersSnap.val();
+                    let count = 0;
+                    Object.values(users).forEach(u => { if(u && u.id !== myId && (u.name === baseName || (u.name && u.name.startsWith(baseName + "#")))) count++; });
+                    if(count > 0) finalName = `${baseName}#${count}`;
+                }
+                myName = finalName;
+            }
+            await joinGame(role);
+        } catch (e) { alert("ログインエラー"); }
     };
 
     async function joinGame(role) {
         isAdmin = (role === 'admin');
+        if(isAdmin) document.body.classList.add('is-admin-mode');
         const userRef = ref(db, `game/users/${myId}`);
-        await set(userRef, { id: myId, name: myName, isAdmin, score: 0, joinedAt: serverTimestamp(), isOnline: true });
+        await set(userRef, { id: myId, name: myName, isAdmin, score: 0, joinedAt: serverTimestamp(), lastSeen: serverTimestamp(), isOnline: true });
         document.getElementById('setup-screen').style.display = 'none';
         document.getElementById('main-game').style.display = 'flex';
         if(isAdmin) document.getElementById('admin-panel').style.display = 'block';
-        onDisconnect(userRef).update({ isOnline: false });
+        onDisconnect(userRef).update({ isOnline: false, lastSeen: serverTimestamp() });
+        setInterval(() => { if(myId) update(ref(db, `game/users/${myId}`), { lastSeen: serverTimestamp(), isOnline: true }); }, 30000);
         initYouTube();
     }
 
@@ -165,112 +231,414 @@
     }
 
     window.onYouTubeIframeAPIReady = () => {
-        let origin = window.location.protocol + '//' + window.location.hostname + (window.location.port ? ':' + window.location.port : '');
+        if (player) return;
+        let origin = window.location.protocol + '//' + window.location.hostname;
+        if (window.location.port) origin += ':' + window.location.port;
+
         player = new YT.Player('player', {
             height: '100%', width: '100%', videoId: 'dQw4w9WgXcQ',
+            host: 'https://www.youtube-nocookie.com',
             playerVars: { 
                 'controls': 0, 'disablekb': 1, 'rel': 0, 'autoplay': 1, 'mute': 1,
-                'enablejsapi': 1, 'widget_referrer': origin,
-                'playsinline': 1, 'iv_load_policy': 3, 'modestbranding': 1,
-                // 【修正箇所】CyTubeと同じように広告抑制ドメイン(nocookie)を強制指定
-                'host': 'https://www.youtube-nocookie.com',
-                'origin': origin
+                'origin': origin,
+                'enablejsapi': 1,
+                'widget_referrer': origin,
+                'playsinline': 1,
+                'iv_load_policy': 3,
+                'modestbranding': 1,
+                'showinfo': 0,
+                'fs': 0,
+                'autohide': 1,
+                'cc_load_policy': 0,
+                'adunit': 'none'
             },
-            events: { 'onReady': () => listenToSignals() }
+            events: { 
+                'onReady': () => listenToSignals(),
+                'onError': (e) => {
+                    document.getElementById('error-message').style.display = "block";
+                    window.isCurrentVideoError = true;
+                }
+            }
         });
     };
 
+    const updateVolumeUI = (val) => {
+        document.getElementById('volume-val').innerText = val;
+        if(player?.setVolume) player.setVolume(val);
+        document.getElementById('mute-btn').innerText = val == 0 ? "🔇" : "🔈";
+    };
+
+    const toggleMute = () => {
+        const slider = document.getElementById('volume-slider');
+        if(!isMuted) { lastVolume = slider.value; isMuted = true; updateVolumeUI(0); slider.value = 0; } 
+        else { isMuted = false; updateVolumeUI(lastVolume > 0 ? lastVolume : 50); slider.value = (lastVolume > 0 ? lastVolume : 50); }
+    };
+
     function listenToSignals() {
+        if (window.__signals_initialized) return;
+        window.__signals_initialized = true;
+
         onValue(ref(db, 'game/settings'), (snap) => {
-            const data = snap.val(); if(!data) return;
+            const data = snap.val();
+            if(!data) return;
             quizInfo = data;
             if(data.videoId && data.videoId !== lastVideoId) {
                 lastVideoId = data.videoId;
-                player.cueVideoById({ videoId: data.videoId, startSeconds: 0 });
+                if (player && player.cueVideoById) {
+                    player.cueVideoById({ videoId: data.videoId, startSeconds: 0 });
+                }
+                document.getElementById('error-message').style.display = "none";
+                window.isCurrentVideoError = false;
                 document.getElementById('video-cover').style.display = "flex";
+                document.getElementById('ready-text').style.display = "block";
+                document.getElementById('countdown-container').style.display = "none";
+                document.getElementById('play-sec-preview').style.display = "none";
                 hasPointedTitle = false; hasPointedArtist = false; isRevealedGlobal = false;
+                roundPointsEarned = 0;
+                isFirstPlayOfRound = true;
+                document.getElementById('result-notice').style.display = "none";
+                document.getElementById('fastest-ranking').style.display = "none";
+                currentRankingVisible = false;
+                window.is1stPointAwarded = false; 
             }
             document.getElementById('round-text').innerText = `ROUND ${quizInfo.round || 0}`;
+            if(isAdmin) {
+                document.getElementById('admin-round-text').innerText = `Round: ${quizInfo.round || 0}`;
+                document.getElementById('admin-answer-preview').innerText = `答え: ${quizInfo.title} / ${quizInfo.artist}`;
+            }
         });
 
         onValue(ref(db, 'game/signal'), (snap) => {
-            const sig = snap.val(); if(!sig || !player) return;
+            const sig = snap.val(); 
+            if(!sig || !player) return;
+
             if(sig.type === 'countdown') {
                 const container = document.getElementById('countdown-container');
+                const countDisp = document.getElementById('countdown-display');
+                const line = document.getElementById('countdown-line');
                 const readyText = document.getElementById('ready-text');
                 const previewText = document.getElementById('play-sec-preview');
+
                 readyText.style.display = "none";
                 container.style.display = "flex";
                 previewText.style.display = "block";
                 previewText.innerText = `再生時間: ${sig.duration || 0}秒`;
-                document.getElementById('countdown-display').innerText = sig.value;
+                
+                countDisp.innerText = sig.value;
+                line.style.animation = 'none';
+                line.offsetHeight; 
+                line.style.animation = 'spin 1s linear forwards';
+
             } else if(sig.type === 'play') {
                 document.getElementById('countdown-container').style.display = "none";
                 document.getElementById('play-sec-preview').style.display = "none";
-                player.unMute(); player.playVideo(); player.seekTo(0, true);
-                setTimeout(() => { if(!isRevealedGlobal) player.pauseVideo(); }, sig.value * 1000);
+                if (window.quizTimer) clearTimeout(window.quizTimer);
+                player.unMute();
+                player.playVideo(); 
+                player.seekTo(0, true); 
+                const correction = 100; 
+                const duration = Math.max(0, (sig.value * 1000) - correction);
+                window.quizTimer = setTimeout(() => { player.pauseVideo(); }, duration);
+                isFirstPlayOfRound = false;
+
             } else if(sig.type === 'reveal') {
-                isRevealedGlobal = true; player.unMute(); player.playVideo();
+                isRevealedGlobal = true; 
+                if (window.quizTimer) clearTimeout(window.quizTimer);
+                player.unMute(); player.playVideo();
                 document.getElementById('video-cover').style.display = "none";
+                const playerEl = document.getElementById('player');
+                if (playerEl) playerEl.style.opacity = "1";
+            } else if(sig.type === 'ranking_toggle') {
+                const panel = document.getElementById('fastest-ranking');
+                if(sig.value) { renderRanking(); panel.style.display = "block"; } else { panel.style.display = "none"; }
+            } else if(sig.type === 'show_video') {
+                const playerEl = document.getElementById('player');
+                document.getElementById('video-cover').style.display = sig.value ? "none" : "flex";
+                if (playerEl) playerEl.style.opacity = sig.value ? "1" : "0";
+            } else if(sig.type === 'seek') {
+                if (player && player.seekTo && !isAdmin) {
+                    player.seekTo(sig.value, true);
+                }
             }
         });
 
         onValue(ref(db, 'game/users'), (snap) => {
             const list = document.getElementById('user-list'); list.innerHTML = "";
-            const users = []; snap.forEach(c => { users.push(c.val()); });
-            users.sort((a,b) => (b.score || 0) - (a.score || 0)).forEach(u => {
+            const users = []; snap.forEach(c => { const u = c.val(); if(u?.name) users.push(u); });
+            
+            const maxScore = users.length > 0 ? Math.max(...users.map(u => u.score || 0)) : 0;
+
+            users.sort((a,b) => {
+                if (a.isAdmin !== b.isAdmin) return a.isAdmin ? -1 : 1;
+                if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
+                if (b.score !== a.score) return b.score - a.score;
+                return a.joinedAt - b.joinedAt;
+            });
+            users.forEach(u => {
                 const div = document.createElement('div');
                 div.className = `user-card ${u.id === myId ? 'is-me' : ''} ${u.isAdmin ? 'is-admin' : ''}`;
-                div.innerHTML = `<div>${u.name}</div><b>${u.score || 0} pt</b>`;
+                const isOnline = u.isOnline === true;
+                const statusText = isOnline ? "" : " <small style='color:#888;'>(離席)</small>";
+                div.style.opacity = isOnline ? "1" : "0.5";
+                
+                const isTop = (u.score > 0 && u.score === maxScore);
+                const crown = isTop ? '<span class="crown">👑</span>' : '';
+                const correctMark = (isAdmin && u.hasCorrectedTitle) ? '<span class="correct-mark">正解</span>' : '';
+                
+                const scoreDisplay = u.isAdmin ? "" : `<b>${u.score || 0} pt</b>`;
+                div.innerHTML = `<div>${crown}${u.name}${u.isAdmin ? " <small>(HOST)</small>":""}${statusText}${correctMark}</div>${scoreDisplay}`;
                 list.appendChild(div);
             });
+            const onlineCount = users.filter(u => u.isOnline === true && !u.isAdmin).length;
+            document.getElementById('player-count').innerText = `${onlineCount} ONLINE`;
+        });
+
+        onValue(query(ref(db, 'game/chats'), limitToLast(1)), (snap) => {
+            if (!snap.exists()) return;
+            const data = snap.val();
+            const key = Object.keys(data)[0];
+            const m = data[key];
+            if (window.lastProcessedChatKey === key) return;
+            const now = Date.now();
+            if (m.time && (now - m.time < 3000)) { window.lastProcessedChatKey = key; showDanmaku(m); }
         });
     }
 
-    function normalize(t) { return t ? t.normalize("NFKC").replace(/[！!？?。．、，\s]/g, "").toLowerCase() : ""; }
+    function normalize(t) { return t ? t.normalize("NFKC").replace(/[！!？?。．、，\s]/g, "").replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60)).toLowerCase() : ""; }
 
     const sendAnswer = () => {
         const input = document.getElementById('answer-input'), text = input.value.trim();
-        if(!text || isRevealedGlobal) return;
-        const normIn = normalize(text);
-        if(normalize(quizInfo.title) === normIn && !hasPointedTitle) {
-            update(ref(db, `game/users/${myId}`), { score: increment(10) });
-            hasPointedTitle = true;
-        } else if(normalize(quizInfo.artist) === normIn && !hasPointedArtist) {
-            update(ref(db, `game/users/${myId}`), { score: increment(5) });
-            hasPointedArtist = true;
+        if(!text) return;
+
+        if(isAdmin) {
+            pushChat(text, false, false);
+            input.value = "";
+            return;
         }
-        push(ref(db, 'game/chats'), { user: myName, text, time: serverTimestamp() });
+
+        if(isRevealedGlobal) { pushChat(text, false, false); input.value = ""; return; }
+        const normIn = normalize(text);
+        
+        const titleCandidates = quizInfo.title.split('.').map(c => normalize(c));
+        const artistCandidates = quizInfo.artist.split('.').map(c => normalize(c));
+        
+        const isTitle = titleCandidates.includes(normIn);
+        const isArtist = artistCandidates.includes(normIn);
+        
+        if (isTitle || isArtist) {
+            const sec = quizInfo.currentSeconds || 0;
+            let titlePoints = 0;
+            let artistPoints = 0;
+
+            if (sec === 1 || sec === 1.5) { titlePoints = 10; artistPoints = 5; }
+            else if (sec === 2 || sec === 2.5) { titlePoints = 9; artistPoints = 4; }
+            else if (sec === 3) { titlePoints = 8; artistPoints = 3; }
+            else if (sec === 5) { titlePoints = 6; artistPoints = 2; }
+            else if (sec === 10) { titlePoints = 5; artistPoints = 1; }
+
+            if (isTitle && !hasPointedTitle) {
+                const addedPoints = Math.max(0, titlePoints - roundPointsEarned);
+                if (addedPoints > 0) {
+                    update(ref(db, `game/users/${myId}`), { 
+                        score: increment(addedPoints),
+                        hasCorrectedTitle: true
+                    });
+                    showNotice(`正解！(+${addedPoints}pt)`, "var(--success-green)");
+                    roundPointsEarned += addedPoints;
+                }
+                hasPointedTitle = true;
+            } else if (isArtist && !hasPointedArtist && !hasPointedTitle) {
+                const addedPoints = Math.max(0, artistPoints - roundPointsEarned);
+                if (addedPoints > 0) {
+                    update(ref(db, `game/users/${myId}`), { score: increment(addedPoints) });
+                    showNotice(`アーティスト正解！(+${addedPoints}pt)`, "var(--gold)");
+                    roundPointsEarned += addedPoints;
+                }
+                hasPointedArtist = true;
+            }
+        }
+        pushChat(text, isTitle, isArtist);
         input.value = "";
     };
 
-    document.getElementById('btn-join-player').onclick = () => prepareJoin('player');
-    document.getElementById('btn-admin-login').onclick = () => prepareJoin('admin');
-    document.getElementById('btn-send-answer').onclick = sendAnswer;
-    document.getElementById('answer-input').onkeypress = (e) => { if(e.key === 'Enter') sendAnswer(); };
+    const pushChat = (text, isTitle, isArtist) => push(ref(db, 'game/chats'), { userId: myId, user: myName, text, isTitle, isArtist, time: serverTimestamp(), round: quizInfo.round });
+    const showNotice = (t, c) => { const n = document.getElementById('result-notice'); n.innerText = t; n.style.color = c; n.style.display = "block"; };
+    const showDanmaku = (m) => {
+        const div = document.createElement('div'); div.className = `danmaku`; div.innerText = `${m.user}: ${m.text}`;
+        div.style.top = (Math.random() * 70 + 10) + "%"; document.getElementById('screen-chat-overlay').appendChild(div);
+        setTimeout(() => div.remove(), 4000);
+    };
 
-    if(isAdmin) {
-        document.getElementById('btn-next-quiz').onclick = () => {
-            const lines = document.getElementById('reserve-area').value.trim().split('\n');
-            const parts = lines[0].split(' ');
-            if(parts.length < 3) return alert("URL 曲名 アーティスト の形式で入力してください");
-            const vId = parts[0].split('v=')[1] || parts[0].split('/').pop();
-            set(ref(db, 'game/settings'), { videoId: vId, title: parts[1], artist: parts[2], round: (quizInfo.round || 0) + 1 });
-            set(ref(db, 'game/signal'), { type: 'reset' });
-        };
-        const adminPlay = (sec) => {
-            let count = 3;
-            const timer = setInterval(() => {
-                if(count > 0) { set(ref(db, 'game/signal'), { type: 'countdown', value: count, duration: sec }); count--; }
-                else { set(ref(db, 'game/signal'), { type: 'play', value: sec }); clearInterval(timer); }
-            }, 1000);
-        };
-        document.getElementById('btn-play-1').onclick = () => adminPlay(1);
-        document.getElementById('btn-play-2').onclick = () => adminPlay(2);
-        document.getElementById('btn-play-3').onclick = () => adminPlay(3);
-        document.getElementById('btn-play-5').onclick = () => adminPlay(5);
-        document.getElementById('btn-reveal').onclick = () => set(ref(db, 'game/signal'), { type: 'reveal' });
+    const sendSignal = (type, value) => set(ref(db, 'game/signal'), { type, value, time: Date.now() });
+
+    const loadNextFromReserve = async () => {
+        const area = document.getElementById('reserve-area'), lines = area.value.trim().split('\n');
+        if(!lines[0]) return alert("予約リストが空です");
+
+        let nextRound = quizInfo.round || 0;
+        if (!window.isCurrentVideoError || nextRound === 0) {
+            nextRound += 1;
+        }
+
+        const currentLine = lines.shift(); area.value = lines.join('\n');
+        const parts = currentLine.split(/\s+/);
+        
+        const urlStr = parts[0];
+        let vid = "";
+        const match = urlStr.match(/(?:v=|v\/|embed\/|shorts\/|youtu\.be\/|\/be\/|watch\?v=|&v=|^)([a-zA-Z0-9_-]{11})/);
+        if (match) vid = match[1];
+
+        if(!vid || vid.length !== 11) return alert("有効なURL/IDではありません");
+        
+        const userSnap = await get(ref(db, 'game/users'));
+        if(userSnap.exists()){
+            const updates = {};
+            Object.keys(userSnap.val()).forEach(uid => { updates[`game/users/${uid}/hasCorrectedTitle`] = false; });
+            await update(ref(db), updates);
+        }
+
+        await set(ref(db, 'game/signal_time'), 0);
+        await set(ref(db, 'game/settings'), { videoId: vid, title: parts[1]||"", artist: parts[2]||"", round: nextRound });
+        await sendSignal('show_video', false);
+    };
+
+    const resetRoomData = async () => {
+        if(!confirm("リセット？")) return;
+        try {
+            await remove(ref(db, 'game/chats'));
+            await set(ref(db, 'game/signal_time'), 0);
+            await set(ref(db, 'game/settings'), { videoId: 'dQw4w9WgXcQ', title: '', artist: '', round: 0 });
+            const snap = await get(ref(db, 'game/users'));
+            if(snap.exists()) {
+                const usersData = snap.val();
+                for (const key in usersData) { 
+                    if (usersData[key].isOnline === true) { 
+                        await update(ref(db, `game/users/${key}`), { score: 0, hasCorrectedTitle: false }); 
+                    } else { 
+                        await remove(ref(db, `game/users/${key}`)); 
+                    } 
+                }
+            }
+            alert("リセット完了");
+        } catch (e) { alert("エラー"); }
+    };
+
+    async function renderRanking() {
+        const [chatSnap, timeSnap] = await Promise.all([get(ref(db, 'game/chats')), get(ref(db, 'game/signal_time'))]);
+        const startTime = timeSnap.val() || 0;
+        const rankPanel = document.getElementById('fastest-ranking');
+        const rankList = document.getElementById('rank-list');
+        rankList.innerHTML = ""; rankPanel.style.display = "block"; rankPanel.classList.remove('winner-anim');
+        
+        if(!chatSnap.exists() || startTime === 0) { 
+            rankList.innerHTML = "<div>正解者なし</div>"; 
+            return; 
+        }
+
+        let corrects = [];
+        chatSnap.forEach(c => {
+            const d = c.val();
+            if(String(d.round) === String(quizInfo.round) && d.isTitle === true && Number(d.time) >= startTime) {
+                const identifier = d.userId || d.user;
+                if(!corrects.find(x => x.id === identifier)) { 
+                    corrects.push({ id: identifier, user: d.user || "名無し", time: Number(d.time) }); 
+                }
+            }
+        });
+
+        if(corrects.length === 0) { 
+            rankList.innerHTML = "<div>正解者なし</div>"; 
+            return; 
+        }
+        
+        corrects.sort((a, b) => a.time - b.time);
+        const top6 = corrects.slice(0, 6);
+        const elements = [];
+        top6.forEach((item, idx) => {
+            const div = document.createElement('div'); const is1st = (idx === 0); div.className = `rank-item ${is1st ? 'is-1st' : ''}`;
+            const sec = (item.time - startTime) / 1000; div.innerHTML = `<span>${idx + 1}位: ${item.user}</span><span>${sec.toFixed(2)}s</span>`;
+            rankList.appendChild(div); elements.push({ el: div, is1st: is1st, userId: item.id });
+        });
+        
+        for (let i = elements.length - 1; i >= 0; i--) { 
+            const target = elements[i]; 
+            await new Promise(r => setTimeout(r, target.is1st ? 1500 : 400)); 
+            target.el.classList.add('show'); 
+            
+            if (target.is1st) {
+                rankPanel.classList.add('winner-anim');
+                if (isAdmin && !window.is1stPointAwarded) {
+                    window.is1stPointAwarded = true;
+                    update(ref(db, `game/users/${target.userId}`), { score: increment(5) });
+                }
+            }
+        }
     }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('btn-join-player').onclick = () => prepareJoin('player');
+        document.getElementById('btn-admin-login').onclick = () => { if(prompt("パスワード") === "admin123") prepareJoin('admin'); };
+        document.getElementById('btn-send-answer').onclick = sendAnswer;
+        document.getElementById('answer-input').onkeypress = (e) => { if(e.key === 'Enter') sendAnswer(); };
+        document.getElementById('mute-btn').onclick = toggleMute;
+        document.getElementById('volume-slider').oninput = (e) => updateVolumeUI(e.target.value);
+
+        const triggerPlayWithCountdown = async (sec) => {
+            const startNum = isFirstPlayOfRound ? 3 : 1;
+            for(let i = startNum; i >= 1; i--) {
+                await set(ref(db, 'game/signal'), { type: 'countdown', value: i, duration: sec, time: Date.now() });
+                await new Promise(r => setTimeout(r, 1000));
+            }
+            const playTime = Date.now();
+            if (isFirstPlayOfRound && (sec === 1 || sec === 1.5)) { await set(ref(db, 'game/signal_time'), playTime); }
+            await update(ref(db, 'game/settings'), { currentSeconds: sec });
+            await set(ref(db, 'game/signal'), { type: 'play', value: sec, time: playTime });
+        };
+
+        document.getElementById('btn-play-1').onclick = () => triggerPlayWithCountdown(1);
+        document.getElementById('btn-play-1-5').onclick = () => triggerPlayWithCountdown(1.5);
+        document.getElementById('btn-play-2').onclick = () => triggerPlayWithCountdown(2);
+        document.getElementById('btn-play-2-5').onclick = () => triggerPlayWithCountdown(2.5);
+        document.getElementById('btn-play-3').onclick = () => triggerPlayWithCountdown(3);
+        document.getElementById('btn-play-5').onclick = () => triggerPlayWithCountdown(5);
+        document.getElementById('btn-play-10').onclick = () => triggerPlayWithCountdown(10);
+
+        document.getElementById('btn-reveal').onclick = () => sendSignal('reveal', true);
+        document.getElementById('btn-toggle-rank').onclick = async () => {
+            currentRankingVisible = !currentRankingVisible;
+            sendSignal('ranking_toggle', currentRankingVisible);
+        };
+        document.getElementById('btn-video-on').onclick = () => sendSignal('show_video', true);
+        document.getElementById('btn-video-off').onclick = () => sendSignal('show_video', false);
+        document.getElementById('btn-reset-all').onclick = resetRoomData;
+        document.getElementById('btn-next-quiz').onclick = loadNextFromReserve;
+
+        const adminSeekbar = document.getElementById('admin-seekbar');
+        const adminTimeDisp = document.getElementById('admin-time-display');
+
+        setInterval(() => {
+            if (isAdmin && player && player.getCurrentTime && player.getDuration) {
+                const curr = player.getCurrentTime();
+                const dur = player.getDuration();
+                if (dur > 0 && !adminSeekbar.dataset.dragging) {
+                    adminSeekbar.value = (curr / dur) * 100;
+                    const m = Math.floor(curr / 60);
+                    const s = Math.floor(curr % 60);
+                    adminTimeDisp.innerText = `${m}:${s.toString().padStart(2, '0')}`;
+                }
+            }
+        }, 500);
+
+        adminSeekbar.onmousedown = () => { adminSeekbar.dataset.dragging = "true"; };
+        adminSeekbar.onmouseup = async () => {
+            adminSeekbar.dataset.dragging = "";
+            if (player && player.getDuration) {
+                const seekTime = (adminSeekbar.value / 100) * player.getDuration();
+                await set(ref(db, 'game/signal'), { type: 'seek', value: seekTime, time: Date.now() });
+                player.seekTo(seekTime, true);
+            }
+        };
+    });
 </script>
 </body>
 </html>
