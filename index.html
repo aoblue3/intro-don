@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>INTRO DON! - testver</title>
+    <title>INTRO DON! - Stable Edition</title>
     <style>
         :root { --primary-color: #007bff; --admin-color: #ff4757; --bg-color: #0f0f0f; --gold: #ffd700; --my-name-color: #00d4ff; --success-green: #28a745; }
         body { font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif; margin: 0; background: var(--bg-color); color: #fff; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -338,6 +338,7 @@
         player = new YT.Player('player', {
             height: '100%', width: '100%', videoId: 'dQw4w9WgXcQ',
             host: 'https://www.youtube-nocookie.com',
+/* 修正箇所：window.onYouTubeIframeAPIReady 内の playerVars */
             playerVars: { 
                 'controls': 0,
                 'disablekb': 1,
@@ -352,7 +353,6 @@
                 'modestbranding': 1,
                 'cc_load_policy': 0,
                 'adunit': 'none',
-                'playlist': data.videoId // 自身のIDをプレイリストに入れることで、広告の発生を抑える手法
             },
             events: { 
                 'onReady': () => listenToSignals(),
