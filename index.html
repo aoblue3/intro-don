@@ -20,6 +20,15 @@
         #reserve-area { flex: 1; height: 50px; background: #222; color: #0f0; border: 1px solid #444; border-radius: 4px; font-family: monospace; font-size: 11px; padding: 5px; }
         #admin-seekbar { flex: 1; min-width: 150px; cursor: pointer; }
 
+        /* 問題追加モーダル */
+        #q-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 10001; align-items: center; justify-content: center; }
+        .q-modal-box { background: #222; padding: 25px; border-radius: 15px; width: 400px; border: 1px solid var(--admin-color); }
+        .q-modal-box h3 { margin-top: 0; color: var(--admin-color); }
+        .q-input-group { margin-bottom: 15px; }
+        .q-input-group label { display: block; font-size: 12px; margin-bottom: 5px; color: #aaa; }
+        .q-input-group input, .q-input-group select { width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; box-sizing: border-box; }
+        .q-modal-btns { display: flex; gap: 10px; margin-top: 20px; }
+
         /* メインレイアウト */
         #main-game { display: none; flex: 1; overflow: hidden; }
         #video-section { flex: 7; position: relative; background: #000; display: flex; flex-direction: column; }
@@ -28,6 +37,48 @@
         #player { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
         #click-guard { position: absolute; inset: 0; z-index: 15; background: transparent; }
         #video-cover { position: absolute; inset: 0; background: radial-gradient(circle, #222 0%, #000 100%); z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+
+        /* 問題文表示エリア */
+        #quiz-question-display {
+            position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8); padding: 15px 30px; border-radius: 10px;
+            border-left: 5px solid var(--primary-color); font-size: 1.8rem; font-weight: bold;
+            color: #fff; z-index: 70; display: none; text-shadow: 2px 2px 4px #000;
+            max-width: 70%; text-align: center;
+        }
+
+        /* クイズ専用15秒カウントダウン */
+        #quiz-timer-display {
+            position: absolute; bottom: 80px; right: 20px;
+            background: rgba(255, 71, 87, 0.9); padding: 15px 20px; border-radius: 10px;
+            font-size: 1.8rem; font-weight: bold; color: #fff; z-index: 51; display: none;
+            min-width: 80px; text-align: center; box-shadow: 0 0 15px rgba(255, 71, 87, 0.5);
+        }
+
+        /* クイズ専用開始カウントダウン */
+        #quiz-start-overlay {
+            position: absolute; inset: 0; background: rgba(0,0,0,0.8);
+            z-index: 60; display: none; align-items: center; justify-content: center;
+            font-size: 12rem; font-weight: bold; color: var(--gold); text-shadow: 0 0 30px var(--gold);
+        }
+
+        /* クイズタイトル隠し用オーバーレイ */
+        #quiz-title-mask {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 60px;
+            background: #000;
+            z-index: 42;
+            display: none;
+        }
+
+        /* モザイククイズ用 */
+        #mosaic-overlay {
+            position: absolute; inset: 0; z-index: 39; display: none;
+            backdrop-filter: blur(50px); pointer-events: none;
+        }
 
         /* カウントダウン表示 */
         #countdown-container { display: none; position: relative; width: 250px; height: 250px; align-items: center; justify-content: center; }
@@ -73,9 +124,9 @@
         .crown { color: var(--gold); margin-right: 4px; }
         .correct-mark { background: var(--success-green); color: white; font-size: 10px; padding: 2px 5px; border-radius: 4px; margin-left: 5px; }
 
-        #input-area { padding: 15px; background: #1a1a1a; display: flex; gap: 10px; border-top: 1px solid #333; align-items: center; z-index: 50; position: relative; }
+        #input-area { padding: 15px; background: #1a1a1a; display: flex; gap: 10px; border-top: 1px solid #333; align-items: center; z-index: 70; position: relative; }
         #answer-input { flex: 1; padding: 12px 20px; border-radius: 25px; border: 2px solid #444; background: #333; color: #fff; outline: none; }
-        #result-notice { position: absolute; top: -30px; left: 20px; font-weight: bold; display: none; z-index: 60; }
+        #result-notice { position: absolute; top: -30px; left: 20px; font-weight: bold; display: none; z-index: 80; }
         
         .volume-controls { display: flex; align-items: center; gap: 8px; min-width: 140px; }
         #volume-slider { accent-color: var(--primary-color); width: 80px; cursor: pointer; }
@@ -109,20 +160,69 @@
         ｜ <button class="admin-btn" id="btn-toggle-rank" style="background:var(--gold); color:#000;">早解き表示</button>
         <button class="admin-btn" id="btn-video-on" style="background:#007bff">画面ON</button>
         <button class="admin-btn" id="btn-video-off" style="background:#666">画面OFF</button>
+        ｜ <button class="admin-btn" id="btn-open-q-modal" style="background:#555">問題追加</button>
         ｜ <button class="admin-btn" id="btn-reset-all" style="background:#444">全リセット</button>
         ｜ <input type="range" id="admin-seekbar" min="0" max="100" value="0">
         <span id="admin-time-display" style="color:#0f0; font-size:12px; font-family:monospace; min-width:35px;">0:00</span>
     </div>
     <div class="admin-row">
-        <textarea id="reserve-area" placeholder="URL 曲名 アーティスト"></textarea>
+        <textarea id="reserve-area" placeholder="URL 曲名 アーティスト (クイズは URL !!問題 答え)"></textarea>
         <button class="admin-btn" id="btn-next-quiz" style="background:var(--primary-color); height:50px;">次の曲へ</button>
         <span id="admin-answer-preview" style="color:#0f0; font-size:12px; margin-left:10px;"></span>
+    </div>
+</div>
+
+<!-- 問題追加モーダル -->
+<div id="q-modal">
+    <div class="q-modal-box">
+        <h3>問題を追加</h3>
+        <div class="q-input-group">
+            <label>形式</label>
+            <select id="mq-type">
+                <option value="normal">イントロ (URL 曲名 アーティスト)</option>
+                <option value="quiz">クイズ (URL !!問題 答え)</option>
+                <option value="mosaic">モザイク (URL ""問題 答え)</option>
+            </select>
+        </div>
+        <div class="q-input-group">
+            <label>YouTube URL / ID</label>
+            <input type="text" id="mq-url" placeholder="https://www.youtube.com/watch?v=...">
+        </div>
+        <div id="mq-normal-inputs">
+            <div class="q-input-group">
+                <label>曲名 / 答え</label>
+                <input type="text" id="mq-title" placeholder="曲名 または クイズの答え">
+            </div>
+            <div class="q-input-group" id="mq-artist-group">
+                <label>アーティスト名</label>
+                <input type="text" id="mq-artist" placeholder="アーティスト名">
+            </div>
+        </div>
+        <div id="mq-quiz-inputs" style="display:none;">
+            <div class="q-input-group">
+                <label>問題文</label>
+                <input type="text" id="mq-question" placeholder="画面に表示する問題文">
+            </div>
+        </div>
+        <div class="q-input-group">
+            <label>音量倍率 (0.1〜2.0 / 通常は1)</label>
+            <input type="number" id="mq-vol" value="1.0" step="0.1">
+        </div>
+        <div class="q-modal-btns">
+            <button class="admin-btn" id="btn-mq-add" style="flex:1; background:var(--primary-color);">リストに追加</button>
+            <button class="admin-btn" id="btn-mq-close" style="flex:1; background:#666;">キャンセル</button>
+        </div>
     </div>
 </div>
 
 <div id="main-game">
     <div id="video-section">
         <div id="screen-chat-overlay"></div>
+        <div id="quiz-title-mask"></div>
+        <div id="mosaic-overlay"></div>
+        <div id="quiz-question-display"></div>
+        <div id="quiz-timer-display">15</div>
+        <div id="quiz-start-overlay"></div>
         <div id="fastest-ranking">
             <div style="text-align:center; color:var(--gold); font-weight:bold; border-bottom:2px solid var(--gold); padding-bottom:5px; margin-bottom:10px;">FASTEST CORRECT ANSWERS</div>
             <div id="rank-list"></div>
@@ -182,7 +282,7 @@
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
     let player, myName = "", myId = "", isAdmin = false;
-    let quizInfo = { title: "", artist: "", round: 0 };
+    let quizInfo = { title: "", artist: "", round: 0, isQuizMode: false, isMosaicMode: false, questionText: "", startTimeOffset: 0, volumeRatio: 1.0 };
     let hasPointedTitle = false, hasPointedArtist = false, isRevealedGlobal = false;
     let roundPointsEarned = 0;
     let lastVolume = 50, isMuted = false, currentRankingVisible = false;
@@ -263,8 +363,10 @@
     };
 
     const updateVolumeUI = (val) => {
+        const ratio = quizInfo.volumeRatio || 1.0;
+        const finalVolume = Math.min(100, Math.floor(val * ratio));
         document.getElementById('volume-val').innerText = val;
-        if(player?.setVolume) player.setVolume(val);
+        if(player?.setVolume) player.setVolume(finalVolume);
         document.getElementById('mute-btn').innerText = val == 0 ? "🔇" : "🔈";
     };
 
@@ -282,10 +384,14 @@
             const data = snap.val();
             if(!data) return;
             quizInfo = data;
+            
+            const slider = document.getElementById('volume-slider');
+            updateVolumeUI(slider.value);
+
             if(data.videoId && data.videoId !== lastVideoId) {
                 lastVideoId = data.videoId;
                 if (player && player.cueVideoById) {
-                    player.cueVideoById({ videoId: data.videoId, startSeconds: 0 });
+                    player.cueVideoById({ videoId: data.videoId, startSeconds: data.startTimeOffset || 0 });
                 }
                 document.getElementById('error-message').style.display = "none";
                 window.isCurrentVideoError = false;
@@ -293,6 +399,26 @@
                 document.getElementById('ready-text').style.display = "block";
                 document.getElementById('countdown-container').style.display = "none";
                 document.getElementById('play-sec-preview').style.display = "none";
+                document.getElementById('quiz-question-display').style.display = "none";
+                document.getElementById('quiz-timer-display').style.display = "none";
+                document.getElementById('quiz-start-overlay').style.display = "none";
+                
+                const mosaic = document.getElementById('mosaic-overlay');
+                const mask = document.getElementById('quiz-title-mask');
+                
+                if (quizInfo.isMosaicMode) {
+                    mosaic.style.display = "none"; 
+                    mask.style.display = "none";
+                } else if (quizInfo.isQuizMode) {
+                    mosaic.style.display = "none";
+                    mask.style.display = "block";
+                } else {
+                    mosaic.style.display = "none";
+                    mask.style.display = "none";
+                }
+                
+                if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
+
                 hasPointedTitle = false; hasPointedArtist = false; isRevealedGlobal = false;
                 roundPointsEarned = 0;
                 isFirstPlayOfRound = true;
@@ -300,11 +426,20 @@
                 document.getElementById('fastest-ranking').style.display = "none";
                 currentRankingVisible = false;
                 window.is1stPointAwarded = false; 
+
+                if (quizInfo.isQuizMode) {
+                    document.getElementById('quiz-question-display').innerText = quizInfo.questionText;
+                    document.getElementById('quiz-question-display').style.display = "block";
+                }
             }
             document.getElementById('round-text').innerText = `ROUND ${quizInfo.round || 0}`;
             if(isAdmin) {
                 document.getElementById('admin-round-text').innerText = `Round: ${quizInfo.round || 0}`;
-                document.getElementById('admin-answer-preview').innerText = `答え: ${quizInfo.title} / ${quizInfo.artist}`;
+                if (quizInfo.isQuizMode) {
+                    document.getElementById('admin-answer-preview').innerText = `クイズ答え: ${quizInfo.title}`;
+                } else {
+                    document.getElementById('admin-answer-preview').innerText = `答え: ${quizInfo.title} / ${quizInfo.artist}`;
+                }
             }
         });
 
@@ -329,25 +464,92 @@
                 line.offsetHeight; 
                 line.style.animation = 'spin 1s linear forwards';
 
+            } else if(sig.type === 'quiz_countdown') {
+                const overlay = document.getElementById('quiz-start-overlay');
+                overlay.style.display = "flex";
+                overlay.innerText = sig.value;
+                
+                document.getElementById('ready-text').style.display = "none";
+                document.getElementById('video-cover').style.display = "flex";
+                
+                const mask = document.getElementById('quiz-title-mask');
+                
+                if (quizInfo.isQuizMode && !quizInfo.isMosaicMode) {
+                    mask.style.display = "block";
+                }
+
             } else if(sig.type === 'play') {
                 document.getElementById('countdown-container').style.display = "none";
                 document.getElementById('play-sec-preview').style.display = "none";
+                document.getElementById('quiz-start-overlay').style.display = "none";
+
                 if (window.quizTimer) clearTimeout(window.quizTimer);
+                if (window.quizCountdownInterval) clearInterval(window.quizCountdownInterval);
+                if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
+
                 player.unMute();
                 player.playVideo(); 
-                player.seekTo(0, true); 
+                player.seekTo(quizInfo.startTimeOffset || 0, true); 
                 const correction = 100; 
                 const duration = Math.max(0, (sig.value * 1000) - correction);
-                window.quizTimer = setTimeout(() => { player.pauseVideo(); }, duration);
+                window.quizTimer = setTimeout(() => { 
+                    player.pauseVideo(); 
+                    document.getElementById('quiz-timer-display').style.display = "none";
+                    document.getElementById('mosaic-overlay').style.display = "none";
+                    if (window.quizCountdownInterval) clearInterval(window.quizCountdownInterval);
+                }, duration);
                 isFirstPlayOfRound = false;
+
+                if (quizInfo.isQuizMode) {
+                    document.getElementById('video-cover').style.display = "none";
+                    document.getElementById('player').style.opacity = "1";
+                    document.getElementById('quiz-question-display').style.display = "block";
+                    
+                    const mask = document.getElementById('quiz-title-mask');
+                    const mosaic = document.getElementById('mosaic-overlay');
+                    
+                    if (quizInfo.isMosaicMode) {
+                        mask.style.display = "none";
+                        mosaic.style.display = "block";
+                        mosaic.style.backdropFilter = "blur(50px)";
+                    } else {
+                        mosaic.style.display = "none";
+                        mask.style.display = "block";
+                        window.titleMaskTimer = setTimeout(() => {
+                            mask.style.display = "none";
+                        }, 10000);
+                    }
+
+                    const timerDisp = document.getElementById('quiz-timer-display');
+                    timerDisp.style.display = "block";
+                    let timeLeft = 15;
+                    timerDisp.innerText = timeLeft;
+                    window.quizCountdownInterval = setInterval(() => {
+                        timeLeft--;
+                        if(timeLeft >= 0) {
+                            timerDisp.innerText = timeLeft;
+                            if (quizInfo.isMosaicMode) {
+                                const blurVal = (timeLeft / 15) * 50;
+                                mosaic.style.backdropFilter = `blur(${blurVal}px)`;
+                            }
+                        }
+                        if(timeLeft <= 0) clearInterval(window.quizCountdownInterval);
+                    }, 1000);
+                }
 
             } else if(sig.type === 'reveal') {
                 isRevealedGlobal = true; 
                 if (window.quizTimer) clearTimeout(window.quizTimer);
+                if (window.quizCountdownInterval) clearInterval(window.quizCountdownInterval);
+                if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
+                document.getElementById('quiz-title-mask').style.display = "none";
+                document.getElementById('mosaic-overlay').style.display = "none";
                 player.unMute(); player.playVideo();
                 document.getElementById('video-cover').style.display = "none";
+                document.getElementById('quiz-timer-display').style.display = "none";
                 const playerEl = document.getElementById('player');
                 if (playerEl) playerEl.style.opacity = "1";
+                if (quizInfo.isQuizMode) document.getElementById('quiz-question-display').style.display = "block";
             } else if(sig.type === 'ranking_toggle') {
                 const panel = document.getElementById('fastest-ranking');
                 if(sig.value) { renderRanking(); panel.style.display = "block"; } else { panel.style.display = "none"; }
@@ -355,6 +557,7 @@
                 const playerEl = document.getElementById('player');
                 document.getElementById('video-cover').style.display = sig.value ? "none" : "flex";
                 if (playerEl) playerEl.style.opacity = sig.value ? "1" : "0";
+                if (quizInfo.isQuizMode) document.getElementById('quiz-question-display').style.display = "block";
             } else if(sig.type === 'seek') {
                 if (player && player.seekTo && !isAdmin) {
                     player.seekTo(sig.value, true);
@@ -365,9 +568,7 @@
         onValue(ref(db, 'game/users'), (snap) => {
             const list = document.getElementById('user-list'); list.innerHTML = "";
             const users = []; snap.forEach(c => { const u = c.val(); if(u?.name) users.push(u); });
-            
             const maxScore = users.length > 0 ? Math.max(...users.map(u => u.score || 0)) : 0;
-
             users.sort((a,b) => {
                 if (a.isAdmin !== b.isAdmin) return a.isAdmin ? -1 : 1;
                 if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
@@ -380,11 +581,9 @@
                 const isOnline = u.isOnline === true;
                 const statusText = isOnline ? "" : " <small style='color:#888;'>(離席)</small>";
                 div.style.opacity = isOnline ? "1" : "0.5";
-                
                 const isTop = (u.score > 0 && u.score === maxScore);
                 const crown = isTop ? '<span class="crown">👑</span>' : '';
                 const correctMark = (isAdmin && u.hasCorrectedTitle) ? '<span class="correct-mark">正解</span>' : '';
-                
                 const scoreDisplay = u.isAdmin ? "" : `<b>${u.score || 0} pt</b>`;
                 div.innerHTML = `<div>${crown}${u.name}${u.isAdmin ? " <small>(HOST)</small>":""}${statusText}${correctMark}</div>${scoreDisplay}`;
                 list.appendChild(div);
@@ -409,45 +608,35 @@
     const sendAnswer = () => {
         const input = document.getElementById('answer-input'), text = input.value.trim();
         if(!text) return;
-
-        if(isAdmin) {
-            pushChat(text, false, false);
-            input.value = "";
-            return;
-        }
-
+        if(isAdmin) { pushChat(text, false, false); input.value = ""; return; }
         if(isRevealedGlobal) { pushChat(text, false, false); input.value = ""; return; }
         const normIn = normalize(text);
-        
         const titleCandidates = quizInfo.title.split('.').map(c => normalize(c));
         const artistCandidates = quizInfo.artist.split('.').map(c => normalize(c));
-        
         const isTitle = titleCandidates.includes(normIn);
         const isArtist = artistCandidates.includes(normIn);
-        
         if (isTitle || isArtist) {
             const sec = quizInfo.currentSeconds || 0;
-            let titlePoints = 0;
-            let artistPoints = 0;
-
-            if (sec === 1 || sec === 1.5) { titlePoints = 10; artistPoints = 5; }
-            else if (sec === 2 || sec === 2.5) { titlePoints = 9; artistPoints = 4; }
-            else if (sec === 3) { titlePoints = 8; artistPoints = 3; }
-            else if (sec === 5) { titlePoints = 6; artistPoints = 2; }
-            else if (sec === 10) { titlePoints = 5; artistPoints = 1; }
-
+            let titlePoints = 0; let artistPoints = 0;
+            if (quizInfo.isQuizMode) {
+                const now = Date.now(); const startTime = quizInfo.startTime || 0; const elapsed = (now - startTime) / 1000;
+                if (elapsed > 15) titlePoints = 0; else titlePoints = Math.max(1, Math.ceil(15 - elapsed));
+            } else {
+                if (sec === 1 || sec === 1.5) { titlePoints = 10; artistPoints = 5; }
+                else if (sec === 2 || sec === 2.5) { titlePoints = 9; artistPoints = 4; }
+                else if (sec === 3) { titlePoints = 8; artistPoints = 3; }
+                else if (sec === 5) { titlePoints = 6; artistPoints = 2; }
+                else if (sec === 10) { titlePoints = 5; artistPoints = 1; }
+            }
             if (isTitle && !hasPointedTitle) {
                 const addedPoints = Math.max(0, titlePoints - roundPointsEarned);
                 if (addedPoints > 0) {
-                    update(ref(db, `game/users/${myId}`), { 
-                        score: increment(addedPoints),
-                        hasCorrectedTitle: true
-                    });
+                    update(ref(db, `game/users/${myId}`), { score: increment(addedPoints), hasCorrectedTitle: true });
                     showNotice(`正解！(+${addedPoints}pt)`, "var(--success-green)");
                     roundPointsEarned += addedPoints;
-                }
+                } else if (quizInfo.isQuizMode && titlePoints === 0) { showNotice(`正解！（時間切れ）`, "#888"); }
                 hasPointedTitle = true;
-            } else if (isArtist && !hasPointedArtist && !hasPointedTitle) {
+            } else if (!quizInfo.isQuizMode && isArtist && !hasPointedArtist && !hasPointedTitle) {
                 const addedPoints = Math.max(0, artistPoints - roundPointsEarned);
                 if (addedPoints > 0) {
                     update(ref(db, `game/users/${myId}`), { score: increment(addedPoints) });
@@ -474,32 +663,30 @@
     const loadNextFromReserve = async () => {
         const area = document.getElementById('reserve-area'), lines = area.value.trim().split('\n');
         if(!lines[0]) return alert("予約リストが空です");
-
         let nextRound = quizInfo.round || 0;
-        if (!window.isCurrentVideoError || nextRound === 0) {
-            nextRound += 1;
-        }
-
+        if (!window.isCurrentVideoError || nextRound === 0) nextRound += 1;
         const currentLine = lines.shift(); area.value = lines.join('\n');
         const parts = currentLine.split(/\s+/);
-        
-        const urlStr = parts[0];
-        let vid = "";
-        const match = urlStr.match(/(?:v=|v\/|embed\/|shorts\/|youtu\.be\/|\/be\/|watch\?v=|&v=|^)([a-zA-Z0-9_-]{11})/);
-        if (match) vid = match[1];
-
+        const urlStr = parts[0]; let vid = ""; let startTime = 0;
+        const idMatch = urlStr.match(/(?:v=|v\/|embed\/|shorts\/|youtu\.be\/|\/be\/|watch\?v=|&v=|^)([a-zA-Z0-9_-]{11})/);
+        if (idMatch) vid = idMatch[1];
+        const timeMatch = urlStr.match(/[?&](?:t|start)=(\d+)/);
+        if (timeMatch) startTime = parseInt(timeMatch[1], 10);
         if(!vid || vid.length !== 11) return alert("有効なURL/IDではありません");
-        
+        let volumeRatio = 1.0; const lastPart = parts[parts.length - 1];
+        if (!isNaN(lastPart) && (lastPart.includes('.') || !isNaN(parseFloat(lastPart)))) volumeRatio = parseFloat(parts.pop());
+        let isQuiz = false; let isMosaic = false; let qText = ""; let aText = parts[1] || ""; let artText = parts[2] || "";
+        if (parts[1] && parts[1].startsWith("!!")) { isQuiz = true; qText = parts[1].substring(2); aText = parts[2] || ""; artText = ""; }
+        else if (parts[1] && parts[1].startsWith('""')) { isQuiz = true; isMosaic = true; qText = parts[1].substring(2); aText = parts[2] || ""; artText = ""; }
         const userSnap = await get(ref(db, 'game/users'));
         if(userSnap.exists()){
-            const updates = {};
-            Object.keys(userSnap.val()).forEach(uid => { updates[`game/users/${uid}/hasCorrectedTitle`] = false; });
+            const updates = {}; Object.keys(userSnap.val()).forEach(uid => { updates[`game/users/${uid}/hasCorrectedTitle`] = false; });
             await update(ref(db), updates);
         }
-
         await set(ref(db, 'game/signal_time'), 0);
-        await set(ref(db, 'game/settings'), { videoId: vid, title: parts[1]||"", artist: parts[2]||"", round: nextRound });
-        await sendSignal('show_video', false);
+        await set(ref(db, 'game/settings'), { videoId: vid, title: aText, artist: artText, round: nextRound, isQuizMode: isQuiz, isMosaicMode: isMosaic, questionText: qText, startTimeOffset: startTime, volumeRatio: volumeRatio });
+        await sendSignal('show_video', isQuiz && !isQuiz);
+        if (isQuiz) setTimeout(() => triggerPlayWithCountdown(15), 1500);
     };
 
     const resetRoomData = async () => {
@@ -507,16 +694,13 @@
         try {
             await remove(ref(db, 'game/chats'));
             await set(ref(db, 'game/signal_time'), 0);
-            await set(ref(db, 'game/settings'), { videoId: 'dQw4w9WgXcQ', title: '', artist: '', round: 0 });
+            await set(ref(db, 'game/settings'), { videoId: 'dQw4w9WgXcQ', title: '', artist: '', round: 0, isQuizMode: false, isMosaicMode: false, questionText: "", startTimeOffset: 0, volumeRatio: 1.0 });
             const snap = await get(ref(db, 'game/users'));
             if(snap.exists()) {
                 const usersData = snap.val();
                 for (const key in usersData) { 
-                    if (usersData[key].isOnline === true) { 
-                        await update(ref(db, `game/users/${key}`), { score: 0, hasCorrectedTitle: false }); 
-                    } else { 
-                        await remove(ref(db, `game/users/${key}`)); 
-                    } 
+                    if (usersData[key].isOnline === true) await update(ref(db, `game/users/${key}`), { score: 0, hasCorrectedTitle: false }); 
+                    else await remove(ref(db, `game/users/${key}`)); 
                 }
             }
             alert("リセット完了");
@@ -529,42 +713,28 @@
         const rankPanel = document.getElementById('fastest-ranking');
         const rankList = document.getElementById('rank-list');
         rankList.innerHTML = ""; rankPanel.style.display = "block"; rankPanel.classList.remove('winner-anim');
-        
-        if(!chatSnap.exists() || startTime === 0) { 
-            rankList.innerHTML = "<div>正解者なし</div>"; 
-            return; 
-        }
-
+        if(!chatSnap.exists() || startTime === 0) { rankList.innerHTML = "<div>正解者なし</div>"; return; }
         let corrects = [];
         chatSnap.forEach(c => {
             const d = c.val();
             if(String(d.round) === String(quizInfo.round) && d.isTitle === true && Number(d.time) >= startTime) {
                 const identifier = d.userId || d.user;
-                if(!corrects.find(x => x.id === identifier)) { 
-                    corrects.push({ id: identifier, user: d.user || "名無し", time: Number(d.time) }); 
-                }
+                if(!corrects.find(x => x.id === identifier)) corrects.push({ id: identifier, user: d.user || "名無し", time: Number(d.time) }); 
             }
         });
-
-        if(corrects.length === 0) { 
-            rankList.innerHTML = "<div>正解者なし</div>"; 
-            return; 
-        }
-        
+        if(corrects.length === 0) { rankList.innerHTML = "<div>正解者なし</div>"; return; }
         corrects.sort((a, b) => a.time - b.time);
-        const top6 = corrects.slice(0, 6);
+        const top10 = corrects.slice(0, 10);
         const elements = [];
-        top6.forEach((item, idx) => {
+        top10.forEach((item, idx) => {
             const div = document.createElement('div'); const is1st = (idx === 0); div.className = `rank-item ${is1st ? 'is-1st' : ''}`;
             const sec = (item.time - startTime) / 1000; div.innerHTML = `<span>${idx + 1}位: ${item.user}</span><span>${sec.toFixed(2)}s</span>`;
             rankList.appendChild(div); elements.push({ el: div, is1st: is1st, userId: item.id });
         });
-        
-        for (let i = elements.length - 1; i >= 0; i--) { 
+        for (let i = 0; i < elements.length; i++) { 
             const target = elements[i]; 
             await new Promise(r => setTimeout(r, target.is1st ? 1500 : 400)); 
             target.el.classList.add('show'); 
-            
             if (target.is1st) {
                 rankPanel.classList.add('winner-anim');
                 if (isAdmin && !window.is1stPointAwarded) {
@@ -575,6 +745,19 @@
         }
     }
 
+    const triggerPlayWithCountdown = async (sec) => {
+        const startNum = isFirstPlayOfRound ? 3 : 1;
+        const sigType = quizInfo.isQuizMode ? 'quiz_countdown' : 'countdown';
+        for(let i = startNum; i >= 1; i--) {
+            await set(ref(db, 'game/signal'), { type: sigType, value: i, duration: sec, time: Date.now() });
+            await new Promise(r => setTimeout(r, 1000));
+        }
+        const playTime = Date.now();
+        if (quizInfo.isQuizMode || (isFirstPlayOfRound && (sec === 1 || sec === 1.5))) await set(ref(db, 'game/signal_time'), playTime); 
+        await update(ref(db, 'game/settings'), { currentSeconds: sec, startTime: playTime });
+        await set(ref(db, 'game/signal'), { type: 'play', value: sec, time: playTime });
+    };
+
     document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('btn-join-player').onclick = () => prepareJoin('player');
         document.getElementById('btn-admin-login').onclick = () => { if(prompt("パスワード") === "admin123") prepareJoin('admin'); };
@@ -582,19 +765,6 @@
         document.getElementById('answer-input').onkeypress = (e) => { if(e.key === 'Enter') sendAnswer(); };
         document.getElementById('mute-btn').onclick = toggleMute;
         document.getElementById('volume-slider').oninput = (e) => updateVolumeUI(e.target.value);
-
-        const triggerPlayWithCountdown = async (sec) => {
-            const startNum = isFirstPlayOfRound ? 3 : 1;
-            for(let i = startNum; i >= 1; i--) {
-                await set(ref(db, 'game/signal'), { type: 'countdown', value: i, duration: sec, time: Date.now() });
-                await new Promise(r => setTimeout(r, 1000));
-            }
-            const playTime = Date.now();
-            if (isFirstPlayOfRound && (sec === 1 || sec === 1.5)) { await set(ref(db, 'game/signal_time'), playTime); }
-            await update(ref(db, 'game/settings'), { currentSeconds: sec });
-            await set(ref(db, 'game/signal'), { type: 'play', value: sec, time: playTime });
-        };
-
         document.getElementById('btn-play-1').onclick = () => triggerPlayWithCountdown(1);
         document.getElementById('btn-play-1-5').onclick = () => triggerPlayWithCountdown(1.5);
         document.getElementById('btn-play-2').onclick = () => triggerPlayWithCountdown(2);
@@ -602,8 +772,12 @@
         document.getElementById('btn-play-3').onclick = () => triggerPlayWithCountdown(3);
         document.getElementById('btn-play-5').onclick = () => triggerPlayWithCountdown(5);
         document.getElementById('btn-play-10').onclick = () => triggerPlayWithCountdown(10);
-
-        document.getElementById('btn-reveal').onclick = () => sendSignal('reveal', true);
+        document.getElementById('btn-reveal').onclick = () => {
+            if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
+            document.getElementById('quiz-title-mask').style.display = "none";
+            document.getElementById('mosaic-overlay').style.display = "none";
+            sendSignal('reveal', true);
+        };
         document.getElementById('btn-toggle-rank').onclick = async () => {
             currentRankingVisible = !currentRankingVisible;
             sendSignal('ranking_toggle', currentRankingVisible);
@@ -615,20 +789,16 @@
 
         const adminSeekbar = document.getElementById('admin-seekbar');
         const adminTimeDisp = document.getElementById('admin-time-display');
-
         setInterval(() => {
             if (isAdmin && player && player.getCurrentTime && player.getDuration) {
-                const curr = player.getCurrentTime();
-                const dur = player.getDuration();
+                const curr = player.getCurrentTime(); const dur = player.getDuration();
                 if (dur > 0 && !adminSeekbar.dataset.dragging) {
                     adminSeekbar.value = (curr / dur) * 100;
-                    const m = Math.floor(curr / 60);
-                    const s = Math.floor(curr % 60);
+                    const m = Math.floor(curr / 60); const s = Math.floor(curr % 60);
                     adminTimeDisp.innerText = `${m}:${s.toString().padStart(2, '0')}`;
                 }
             }
         }, 500);
-
         adminSeekbar.onmousedown = () => { adminSeekbar.dataset.dragging = "true"; };
         adminSeekbar.onmouseup = async () => {
             adminSeekbar.dataset.dragging = "";
@@ -637,6 +807,32 @@
                 await set(ref(db, 'game/signal'), { type: 'seek', value: seekTime, time: Date.now() });
                 player.seekTo(seekTime, true);
             }
+        };
+
+        const qModal = document.getElementById('q-modal');
+        const qTypeSelect = document.getElementById('mq-type');
+        const normalInputs = document.getElementById('mq-normal-inputs');
+        const quizInputs = document.getElementById('mq-quiz-inputs');
+        const artistGroup = document.getElementById('mq-artist-group');
+        document.getElementById('btn-open-q-modal').onclick = () => { qModal.style.display = 'flex'; };
+        document.getElementById('btn-mq-close').onclick = () => { qModal.style.display = 'none'; };
+        qTypeSelect.onchange = () => {
+            const val = qTypeSelect.value;
+            if (val === 'normal') { normalInputs.style.display = 'block'; quizInputs.style.display = 'none'; artistGroup.style.display = 'block'; } 
+            else { normalInputs.style.display = 'block'; quizInputs.style.display = 'block'; artistGroup.style.display = 'none'; }
+        };
+        document.getElementById('btn-mq-add').onclick = () => {
+            const type = qTypeSelect.value, url = document.getElementById('mq-url').value.trim(), title = document.getElementById('mq-title').value.trim(), artist = document.getElementById('mq-artist').value.trim(), question = document.getElementById('mq-question').value.trim(), vol = document.getElementById('mq-vol').value.trim() || "1.0";
+            if (!url || !title) return alert("URLと答えは必須です");
+            let line = url + " ";
+            if (type === 'quiz') line += `!!${question} ${title}`;
+            else if (type === 'mosaic') line += `""${question} ${title}`;
+            else line += `${title} ${artist}`;
+            line += ` ${vol}`;
+            const area = document.getElementById('reserve-area');
+            area.value += (area.value ? "\n" : "") + line;
+            document.getElementById('mq-url').value = ""; document.getElementById('mq-title').value = ""; document.getElementById('mq-artist').value = ""; document.getElementById('mq-question').value = "";
+            qModal.style.display = 'none';
         };
     });
 </script>
