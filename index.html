@@ -29,6 +29,9 @@
         #click-guard { position: absolute; inset: 0; z-index: 15; background: transparent; }
         #video-cover { position: absolute; inset: 0; background: radial-gradient(circle, #222 0%, #000 100%); z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 
+        /* 広告ステータス表示 */
+        #ad-status-overlay { position: absolute; top: 10px; left: 10px; z-index: 100; background: rgba(255, 71, 87, 0.8); padding: 5px 15px; border-radius: 20px; font-size: 12px; display: none; font-weight: bold; border: 1px solid #fff; }
+
         /* カウントダウン表示 */
         #countdown-container { display: none; position: relative; width: 250px; height: 250px; align-items: center; justify-content: center; }
         #countdown-circle { position: absolute; inset: 0; border: 6px solid rgba(255, 255, 255, 0.2); border-radius: 50%; }
@@ -122,6 +125,7 @@
 
 <div id="main-game">
     <div id="video-section">
+        <div id="ad-status-overlay">広告中: なし</div>
         <div id="screen-chat-overlay"></div>
         <div id="fastest-ranking">
             <div style="text-align:center; color:var(--gold); font-weight:bold; border-bottom:2px solid var(--gold); padding-bottom:5px; margin-bottom:10px;">FASTEST CORRECT ANSWERS</div>
@@ -221,6 +225,8 @@
         document.getElementById('main-game').style.display = 'flex';
         if(isAdmin) document.getElementById('admin-panel').style.display = 'block';
         onDisconnect(userRef).update({ isOnline: false, lastSeen: serverTimestamp() });
+        // 広告ステータスの離脱時削除
+        onDisconnect(ref(db, `game/ads/${myId}`)).remove();
         setInterval(() => { if(myId) update(ref(db, `game/users/${myId}`), { lastSeen: serverTimestamp(), isOnline: true }); }, 30000);
         initYouTube();
     }
@@ -232,14 +238,13 @@
 
     window.onYouTubeIframeAPIReady = () => {
         if (player) return;
-        // 修正箇所：originの取得方法を厳密化
         let origin = window.location.protocol + '//' + window.location.hostname;
         if (window.location.port) origin += ':' + window.location.port;
 
         player = new YT.Player('player', {
             height: '100%', width: '100%', videoId: 'dQw4w9WgXcQ',
             playerVars: { 
-                'controls': 0, 'disablekb': 1, 'rel': 0, 'autoplay': 1, 'mute': 1,
+                'controls': 1, 'disablekb': 1, 'rel': 0, 'autoplay': 1, 'mute': 1,
                 'origin': origin,
                 'enablejsapi': 1,
                 'widget_referrer': origin,
@@ -249,6 +254,26 @@
             },
             events: { 
                 'onReady': () => listenToSignals(),
+                'onStateChange': (e) => {
+                    // 広告検知ロジック
+                    const isAd = player.getAdStats && player.getAdStats(); // 一部の環境で有効
+                    const isAdState = (e.data === -1 || (e.data === 3 && player.getCurrentTime() === 0));
+                    
+                    if (isAd || isAdState) {
+                        if(myId) set(ref(db, `game/ads/${myId}`), myName);
+                        // 参加者のガードを外す
+                        if(!isAdmin) {
+                            document.getElementById('click-guard').style.display = "none";
+                            document.getElementById('video-cover').style.opacity = "0.3";
+                        }
+                    } else {
+                        if(myId) remove(ref(db, `game/ads/${myId}`));
+                        if(!isAdmin) {
+                            document.getElementById('click-guard').style.display = "block";
+                            document.getElementById('video-cover').style.opacity = "1";
+                        }
+                    }
+                },
                 'onError': (e) => {
                     document.getElementById('error-message').style.display = "block";
                     window.isCurrentVideoError = true;
@@ -273,6 +298,18 @@
         if (window.__signals_initialized) return;
         window.__signals_initialized = true;
 
+        // 広告ステータスの監視
+        onValue(ref(db, 'game/ads'), (snap) => {
+            const overlay = document.getElementById('ad-status-overlay');
+            if (snap.exists()) {
+                const names = Object.values(snap.val());
+                overlay.innerText = `広告中: ${names.join(', ')}`;
+                overlay.style.display = "block";
+            } else {
+                overlay.style.display = "none";
+            }
+        });
+
         onValue(ref(db, 'game/settings'), (snap) => {
             const data = snap.val();
             if(!data) return;
@@ -285,6 +322,7 @@
                 document.getElementById('error-message').style.display = "none";
                 window.isCurrentVideoError = false;
                 document.getElementById('video-cover').style.display = "flex";
+                document.getElementById('video-cover').style.opacity = "1";
                 document.getElementById('ready-text').style.display = "block";
                 document.getElementById('countdown-container').style.display = "none";
                 document.getElementById('play-sec-preview').style.display = "none";
@@ -501,6 +539,7 @@
         if(!confirm("リセット？")) return;
         try {
             await remove(ref(db, 'game/chats'));
+            await remove(ref(db, 'game/ads'));
             await set(ref(db, 'game/signal_time'), 0);
             await set(ref(db, 'game/settings'), { videoId: 'dQw4w9WgXcQ', title: '', artist: '', round: 0 });
             const snap = await get(ref(db, 'game/users'));
@@ -579,6 +618,13 @@
         document.getElementById('volume-slider').oninput = (e) => updateVolumeUI(e.target.value);
 
         const triggerPlayWithCountdown = async (sec) => {
+            // 誰かが広告中の場合は開始不可（主催者のミス防止）
+            const adSnap = await get(ref(db, 'game/ads'));
+            if (adSnap.exists()) {
+                alert("広告中のユーザーがいるため開始できません");
+                return;
+            }
+
             const startNum = isFirstPlayOfRound ? 3 : 1;
             for(let i = startNum; i >= 1; i--) {
                 await set(ref(db, 'game/signal'), { type: 'countdown', value: i, duration: sec, time: Date.now() });
