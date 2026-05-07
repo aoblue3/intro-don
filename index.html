@@ -351,12 +351,8 @@ function initYouTube() {
                 'enablejsapi': 1,
                 'widget_referrer': origin,
                 'playsinline': 1,
-                'iv_load_policy': 3,
-                'modestbranding': 1,
-                'cc_load_policy': 0,
-                'widget_host': 'https://www.youtube-nocookie.com',
-                'html5': 1, // 修正箇所：Firefox等での再生互換性と広告抑制のための明示
-                'fs': 0     // 修正箇所：余計なボタン出力を抑える
+                // 修正箇所：Firefox系で広告を誘発する恐れのある iv_load_policy, cc_load_policy, widget_host を削除し、
+                // ブラウザの「トラッキング防止」との競合を最小限に抑える
             },
             events: { 
                 'onReady': () => listenToSignals(),
