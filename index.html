@@ -340,6 +340,7 @@ function initYouTube() {
             height: '100%', width: '100%', videoId: 'dQw4w9WgXcQ',
             // 修正箇所2：プレイヤーの「通信先」だけをnocookieに固定する
             host: 'https://www.youtube-nocookie.com',
+/* 修正箇所：window.onYouTubeIframeAPIReady 内の playerVars */
             playerVars: { 
                 'controls': 0,
                 'disablekb': 1,
@@ -352,7 +353,8 @@ function initYouTube() {
                 'playsinline': 1,
                 'iv_load_policy': 3,
                 'modestbranding': 1,
-                'cc_load_policy': 0
+                'cc_load_policy': 0,
+                'widget_host': 'https://www.youtube-nocookie.com' // 修正箇所：Firefox系でのドメイン不一致を防ぐ設定を追加
             },
             events: { 
                 'onReady': () => listenToSignals(),
