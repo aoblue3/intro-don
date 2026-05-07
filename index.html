@@ -354,7 +354,9 @@ function initYouTube() {
                 'iv_load_policy': 3,
                 'modestbranding': 1,
                 'cc_load_policy': 0,
-                'widget_host': 'https://www.youtube-nocookie.com' // 修正箇所：Firefox系でのドメイン不一致を防ぐ設定を追加
+                'widget_host': 'https://www.youtube-nocookie.com',
+                'html5': 1, // 修正箇所：Firefox等での再生互換性と広告抑制のための明示
+                'fs': 0     // 修正箇所：余計なボタン出力を抑える
             },
             events: { 
                 'onReady': () => listenToSignals(),
