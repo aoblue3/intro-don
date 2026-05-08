@@ -179,9 +179,9 @@
         <div class="q-input-group">
             <label>形式</label>
             <select id="mq-type">
-                <option value="normal">イントロ (URL 曲名 アーティスト)</option>
-                <option value="quiz">クイズ (URL !!問題 答え)</option>
-                <option value="mosaic">モザイク (URL ""問題 答え)</option>
+                <option value="normal">イントロ (URL*曲名*アーティスト)</option>
+                <option value="quiz">クイズ (URL*!!問題*答え)</option>
+                <option value="mosaic">モザイク (URL*""問題*答え)</option>
             </select>
         </div>
         <div class="q-input-group">
@@ -652,9 +652,10 @@ function initYouTube() {
         if(!text) return;
         if(isAdmin) { pushChat(text, false, false); input.value = ""; return; }
         if(isRevealedGlobal) { pushChat(text, false, false); input.value = ""; return; }
-        const normIn = normalize(text);
-        const titleCandidates = quizInfo.title.split('.').map(c => normalize(c));
-        const artistCandidates = quizInfo.artist.split('.').map(c => normalize(c));
+        const clean = (str) => str ? str.toLowerCase().replace(/[\s　]/g, '') : "";
+        const normIn = clean(text);
+        const titleCandidates = quizInfo.title.split('.').map(c => clean(c));
+        const artistCandidates = quizInfo.artist.split('.').map(c => clean(c));
         const isTitle = titleCandidates.includes(normIn);
         const isArtist = artistCandidates.includes(normIn);
         if (isTitle || isArtist) {
@@ -708,7 +709,7 @@ function initYouTube() {
         let nextRound = quizInfo.round || 0;
         if (!window.isCurrentVideoError || nextRound === 0) nextRound += 1;
         const currentLine = lines.shift(); area.value = lines.join('\n');
-        const parts = currentLine.split(/\s+/);
+        const parts = currentLine.split('*');
         const urlStr = parts[0]; let vid = ""; let startTime = 0;
         const idMatch = urlStr.match(/(?:v=|v\/|embed\/|shorts\/|youtu\.be\/|\/be\/|watch\?v=|&v=|^)([a-zA-Z0-9_-]{11})/);
         if (idMatch) vid = idMatch[1];
@@ -802,7 +803,33 @@ function initYouTube() {
 
     document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('btn-join-player').onclick = () => prepareJoin('player');
-        document.getElementById('btn-admin-login').onclick = () => { if(prompt("パスワード") === "admin123") prepareJoin('admin'); };
+// --- 修正箇所ここから ---
+        document.getElementById('btn-admin-login').onclick = async () => {
+            const pass = prompt("パスワードを入力してください");
+            if (!pass) return;
+
+            try {
+                // Firebase v10の書き方でデータベースからパスワードを取得
+                const snapshot = await get(ref(db, 'admin/password'));
+                const correctPass = snapshot.val();
+
+                if (correctPass === null) {
+                    alert("システムエラー: パスワード設定が見つかりません。");
+                    return;
+                }
+
+                // 入力された値とFirebaseの値を比較
+                if (pass === String(correctPass)) {
+                    prepareJoin('admin');
+                } else {
+                    alert("パスワードが違います");
+                }
+            } catch (error) {
+                console.error("Firebase通信エラー:", error);
+                alert("通信エラーが発生しました。");
+            }
+        };
+// --- 修正箇所ここまで ---
         document.getElementById('btn-send-answer').onclick = sendAnswer;
         document.getElementById('answer-input').onkeypress = (e) => { if(e.key === 'Enter') sendAnswer(); };
         document.getElementById('mute-btn').onclick = toggleMute;
@@ -866,11 +893,11 @@ function initYouTube() {
         document.getElementById('btn-mq-add').onclick = () => {
             const type = qTypeSelect.value, url = document.getElementById('mq-url').value.trim(), title = document.getElementById('mq-title').value.trim(), artist = document.getElementById('mq-artist').value.trim(), question = document.getElementById('mq-question').value.trim(), vol = document.getElementById('mq-vol').value.trim() || "1.0";
             if (!url || !title) return alert("URLと答えは必須です");
-            let line = url + " ";
-            if (type === 'quiz') line += `!!${question} ${title}`;
-            else if (type === 'mosaic') line += `""${question} ${title}`;
-            else line += `${title} ${artist}`;
-            line += ` ${vol}`;
+            let line = url + "*";
+            if (type === 'quiz') line += `!!${question}*${title}`;
+            else if (type === 'mosaic') line += `""${question}*${title}`;
+            else line += `${title}*${artist}`;
+            line += `*${vol}`;
             const area = document.getElementById('reserve-area');
             area.value += (area.value ? "\n" : "") + line;
             document.getElementById('mq-url').value = ""; document.getElementById('mq-title').value = ""; document.getElementById('mq-artist').value = ""; document.getElementById('mq-question').value = "";
