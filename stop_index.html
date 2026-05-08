@@ -226,8 +226,7 @@
         <div id="fastest-ranking">
             <div style="text-align:center; color:var(--gold); font-weight:bold; border-bottom:2px solid var(--gold); padding-bottom:5px; margin-bottom:10px;">FASTEST CORRECT ANSWERS</div>
             <div id="rank-list"></div>
-        </div>
-        
+        </div>        
         <div id="player-wrapper">
             <div id="click-guard"></div>
             <div id="video-cover">
@@ -262,6 +261,7 @@
             <span id="player-count">0 ONLINE</span>
         </div>
         <div id="user-list"></div>
+        <div id="ban-list-display" style="padding:0 15px 15px 15px; font-size:10px; color:#ff4d4d;"></div>
     </div>
 </div>
 
@@ -566,8 +566,44 @@ function initYouTube() {
                 }
             }
         });
+        onValue(ref(db, 'game/settings/bannedUsers'), (snap) => {
+            const bannedList = snap.val() || {};
+            // 自身がBANされていたらリロードして追い出す
+            if (bannedList[myId]) {
+                alert("アクセス権限がありません。");
+                location.reload();
+            }
+            // 管理者の場合のみ解除リストを表示
+            if (isAdmin) {
+                const banListArea = document.getElementById('ban-list-display');
+                if (banListArea) {
+                    banListArea.innerHTML = "<b>BAN中:</b> ";
+                    Object.keys(bannedList).forEach(bid => {
+                        const btn = document.createElement('button');
+                        btn.innerText = `解除:${bid.substring(0,5)}`;
+                        btn.onclick = () => unbanUser(bid);
+                        btn.style.margin = "0 2px";
+                        btn.style.fontSize = "10px";
+                        banListArea.appendChild(btn);
+                    });
+                }
+            }
+        });
 
         onValue(ref(db, 'game/users'), (snap) => {
+            const usersData = snap.val() || {};
+            const usersArray = Object.values(usersData);
+            
+            // 自分(myId)を除いたオンライン人数をカウントする
+            const otherOnlineCount = usersArray.filter(u => u.id !== myId && u.isOnline === true).length;
+            const MAX_CONNECTION = 100; 
+
+            // 管理者ではなく、自分以外のオンライン人数が上限(100)に達している場合のみ制限
+            // (100人目として自分が入れる余裕がある場合は通す)
+            if (!isAdmin && otherOnlineCount >= MAX_CONNECTION) {
+                alert(`現在、満員（${MAX_CONNECTION}名）のため入場できません。`);
+                return location.href = "about:blank"; 
+            }
             const list = document.getElementById('user-list'); list.innerHTML = "";
             const users = []; snap.forEach(c => { const u = c.val(); if(u?.name) users.push(u); });
             const maxScore = users.length > 0 ? Math.max(...users.map(u => u.score || 0)) : 0;
@@ -587,7 +623,11 @@ function initYouTube() {
                 const crown = isTop ? '<span class="crown">👑</span>' : '';
                 const correctMark = (isAdmin && u.hasCorrectedTitle) ? '<span class="correct-mark">正解</span>' : '';
                 const scoreDisplay = u.isAdmin ? "" : `<b>${u.score || 0} pt</b>`;
-                div.innerHTML = `<div>${crown}${u.name}${u.isAdmin ? " <small>(HOST)</small>":""}${statusText}${correctMark}</div>${scoreDisplay}`;
+                
+                // BANボタン：管理者が自分以外の一般ユーザーに対して表示する
+                const banBtn = (isAdmin && !u.isAdmin) ? `<button onclick="banUser('${u.id}')" style="font-size:10px; margin-left:5px; padding:2px 4px; border-radius:4px; border:none; background:#ff4d4d; color:white; cursor:pointer;">BAN</button>` : '';
+
+                div.innerHTML = `<div>${crown}${u.name}${u.isAdmin ? " <small>(HOST)</small>":""}${statusText}${correctMark}${banBtn}</div>${scoreDisplay}`;
                 list.appendChild(div);
             });
             const onlineCount = users.filter(u => u.isOnline === true && !u.isAdmin).length;
@@ -837,6 +877,43 @@ function initYouTube() {
             qModal.style.display = 'none';
         };
     });
+    // --- ここから追加 ---
+    /**
+     * ユーザーをBANする関数
+     * @param {string} userId - 対象ユーザーのID
+     */
+    window.banUser = async (userId) => {
+        if(!isAdmin || !confirm("このユーザーをBANしますか？")) return;
+        
+        try {
+            // 1. BANリスト（bannedUsers）に登録
+            await update(ref(db, `game/settings/bannedUsers`), { [userId]: true });
+            
+            // 2. ユーザーリストから削除して即座に退場させる
+            await remove(ref(db, `game/users/${userId}`));
+            
+            console.log("User banned:", userId);
+        } catch (e) {
+            console.error("BAN失敗:", e);
+        }
+    };
+
+    /**
+     * BANを解除する関数
+     * @param {string} userId - 解除するユーザーのID
+     */
+    window.unbanUser = async (userId) => {
+        if(!isAdmin || !confirm("このユーザーのBANを解除しますか？")) return;
+        
+        try {
+            // BANリストから削除
+            await remove(ref(db, `game/settings/bannedUsers/${userId}`));
+            alert("解除しました。再入場可能です。");
+        } catch (e) {
+            console.error("解除失敗:", e);
+        }
+    };
+// --- ここまで追加 ---
 </script>
 </body>
 </html>
