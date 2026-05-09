@@ -1,8 +1,8 @@
-<!DOCTYPE html>
++<!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>INTRO DON! DX</title>
+    <title>INTRO DON! - Stable Edition</title>
     <style>
         :root { --primary-color: #007bff; --admin-color: #ff4757; --bg-color: #0f0f0f; --gold: #ffd700; --my-name-color: #00d4ff; --success-green: #28a745; }
         body { font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif; margin: 0; background: var(--bg-color); color: #fff; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -97,8 +97,8 @@
         #play-sec-preview { color: #fff; font-weight: bold; font-size: 1.5rem; margin-bottom: 20px; text-transform: uppercase; letter-spacing: 2px; }
 
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-
-        #screen-chat-overlay { position: absolute; inset: 0; z-index: 30; pointer-events: none; overflow: hidden; }
+        /* コメント関連 */
+        #screen-chat-overlay { position: absolute; inset: 0; z-index: 9999; pointer-events: none; overflow: hidden; }
         .danmaku { position: absolute; white-space: nowrap; font-size: 2rem; font-weight: bold; color: #fff; text-shadow: 2px 2px 4px #000; left: 100%; animation: scrollLeft 4s linear forwards; }
         @keyframes scrollLeft { from { left: 100%; } to { left: -150%; } }
         
@@ -139,7 +139,7 @@
 
 <div id="setup-screen">
     <div class="setup-box">
-        <h2 style="margin:0 0 20px 0;">INTRO DON!DX</h2>
+        <h2 style="margin:0 0 20px 0;">INTRO DON!</h2>
         <input type="text" id="user-name" placeholder="名前を入力" style="width:100%; padding:12px; margin-bottom:15px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
         <button id="btn-join-player" class="btn-join">参加する</button>
         <span id="btn-admin-login" class="admin-login-link">🔧 主催者ログイン</span>
@@ -157,6 +157,7 @@
         <button class="admin-btn" id="btn-play-5">5s</button>
         <button class="admin-btn" id="btn-play-10">10s</button>
         ｜ <button class="admin-btn" id="btn-reveal" style="background:#28a745">答え表示</button>
+        <button id="btn-pause" class="admin-btn" style="background:#ff9800;">動画を一時停止</button>
         ｜ <button class="admin-btn" id="btn-toggle-rank" style="background:var(--gold); color:#000;">早解き表示</button>
         <button class="admin-btn" id="btn-video-on" style="background:#007bff">画面ON</button>
         <button class="admin-btn" id="btn-video-off" style="background:#666">画面OFF</button>
@@ -315,8 +316,39 @@
     async function joinGame(role) {
         isAdmin = (role === 'admin');
         if(isAdmin) document.body.classList.add('is-admin-mode');
+// 【ここから追加】
+        let savedId = localStorage.getItem('quiz_user_id');
+        if (!savedId) {
+            localStorage.setItem('quiz_user_id', myId);
+        } else {
+            myId = savedId;
+        }
+
         const userRef = ref(db, `game/users/${myId}`);
-        await set(userRef, { id: myId, name: myName, isAdmin, score: 0, joinedAt: serverTimestamp(), lastSeen: serverTimestamp(), isOnline: true });
+        const snap = await get(userRef);
+        const userData = snap.val();
+
+        if (!userData || userData.score === undefined) {
+            // 新規ユーザー：スコア0で作成
+            await set(userRef, { 
+                id: myId, 
+                name: myName, 
+                isAdmin, 
+                score: 0, 
+                joinedAt: serverTimestamp(), 
+                lastSeen: serverTimestamp(), 
+                isOnline: true 
+            });
+        } else {
+            // 既存ユーザー：スコアを触らず名前と状態だけ更新
+            await update(userRef, { 
+                name: myName, 
+                isAdmin, 
+                lastSeen: serverTimestamp(), 
+                isOnline: true 
+            });
+        }
+        // 【ここまで追加・修正】
         document.getElementById('setup-screen').style.display = 'none';
         document.getElementById('main-game').style.display = 'flex';
         if(isAdmin) document.getElementById('admin-panel').style.display = 'block';
@@ -539,6 +571,7 @@ function initYouTube() {
                     }, 1000);
                 }
 
+// --- 修正箇所ここから ---
             } else if(sig.type === 'reveal') {
                 isRevealedGlobal = true; 
                 if (window.quizTimer) clearTimeout(window.quizTimer);
@@ -546,12 +579,23 @@ function initYouTube() {
                 if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
                 document.getElementById('quiz-title-mask').style.display = "none";
                 document.getElementById('mosaic-overlay').style.display = "none";
+                
+                // 参加者側の通知エリアに「曲名 / アーティスト名」を表示
+                showNotice(`${quizInfo.title} / ${quizInfo.artist}`, "var(--success-green)");
+
                 player.unMute(); player.playVideo();
                 document.getElementById('video-cover').style.display = "none";
                 document.getElementById('quiz-timer-display').style.display = "none";
+// --- 修正箇所ここまで ---
                 const playerEl = document.getElementById('player');
                 if (playerEl) playerEl.style.opacity = "1";
                 if (quizInfo.isQuizMode) document.getElementById('quiz-question-display').style.display = "block";
+            // --- 修正箇所ここから ---
+            } else if(sig.type === 'pause_video') {
+                if (player && player.pauseVideo) {
+                    player.pauseVideo();
+                }
+            // --- 修正箇所ここまで ---
             } else if(sig.type === 'ranking_toggle') {
                 const panel = document.getElementById('fastest-ranking');
                 if(sig.value) { renderRanking(); panel.style.display = "block"; } else { panel.style.display = "none"; }
@@ -619,11 +663,31 @@ function initYouTube() {
                 const isOnline = u.isOnline === true;
                 const statusText = isOnline ? "" : " <small style='color:#888;'>(離席)</small>";
                 div.style.opacity = isOnline ? "1" : "0.5";
-                const isTop = (u.score > 0 && u.score === maxScore);
-                const crown = isTop ? '<span class="crown">👑</span>' : '';
-                const correctMark = (isAdmin && u.hasCorrectedTitle) ? '<span class="correct-mark">正解</span>' : '';
-                const scoreDisplay = u.isAdmin ? "" : `<b>${u.score || 0} pt</b>`;
-                
+// --- 修正箇所ここから ---
+
+// 1. 表示用のスコアを決定する
+let displayScore = u.score || 0;
+
+// 参加者、かつ答えが表示される前（isRevealedGlobalがfalse）の間
+if (!isAdmin && !isRevealedGlobal) {
+    // 前回の確定スコア（prevScore）がある場合はそれを表示
+    // 無い場合（初参加など）は現在のスコアを表示するが、
+    // 基本的に次の曲へ行く時に prevScore = score と保存する運用を想定
+    if (u.prevScore !== undefined) {
+        displayScore = u.prevScore;
+    }
+}
+
+// 2. 王冠の表示判定（表示されているスコアに基づき、参加者画面でも答え公開後は反映）
+const isTop = (displayScore > 0 && displayScore === maxScore);
+const crown = isTop ? '<span class="crown">👑</span>' : '';
+
+// 3. 正解マーク
+const correctMark = ((isAdmin || isRevealedGlobal) && u.hasCorrectedTitle) ? '<span class="correct-mark">正解</span>' : '';
+
+const scoreDisplay = u.isAdmin ? "" : `<b>${displayScore} pt</b>`;
+
+// --- 修正箇所ここまで ---
                 // BANボタン：管理者が自分以外の一般ユーザーに対して表示する
                 const banBtn = (isAdmin && !u.isAdmin) ? `<button onclick="banUser('${u.id}')" style="font-size:10px; margin-left:5px; padding:2px 4px; border-radius:4px; border:none; background:#ff4d4d; color:white; cursor:pointer;">BAN</button>` : '';
 
@@ -652,13 +716,32 @@ function initYouTube() {
         if(!text) return;
         if(isAdmin) { pushChat(text, false, false); input.value = ""; return; }
         if(isRevealedGlobal) { pushChat(text, false, false); input.value = ""; return; }
-        const clean = (str) => str ? str.toLowerCase().replace(/[\s　]/g, '') : "";
+        const clean = (str) => {
+            if (!str) return "";
+            return str
+                .toLowerCase()
+                .replace(/[ぁ-ん]/g, (s) => String.fromCharCode(s.charCodeAt(0) + 0x60)) // ひらがなをカタカナに変換
+                .replace(/[\s　・．。、，,.\-]/g, ''); // 空白、中黒、ドット、記号をすべて削除
+        };
+
         const normIn = clean(text);
         const titleCandidates = quizInfo.title.split('.').map(c => clean(c));
         const artistCandidates = quizInfo.artist.split('.').map(c => clean(c));
-        const isTitle = titleCandidates.includes(normIn);
-        const isArtist = artistCandidates.includes(normIn);
+
+        const isTitle = titleCandidates.some(c => c !== "" && c === normIn);
+        const isArtist = artistCandidates.some(c => c !== "" && c === normIn);
         if (isTitle || isArtist) {
+            // --- 修正箇所ここから ---
+            const now = Date.now();
+            const startTime = quizInfo.startTime || 0;
+            
+            // 最初のカウントダウン中（startTimeが0）は判定をスキップしてチャット送信のみ行う
+            if (startTime === 0) {
+                pushChat(text, isTitle, isArtist);
+                input.value = "";
+                return;
+            }
+            // --- 修正箇所ここまで ---
             const sec = quizInfo.currentSeconds || 0;
             let titlePoints = 0; let artistPoints = 0;
             if (quizInfo.isQuizMode) {
@@ -696,6 +779,18 @@ function initYouTube() {
     const pushChat = (text, isTitle, isArtist) => push(ref(db, 'game/chats'), { userId: myId, user: myName, text, isTitle, isArtist, time: serverTimestamp(), round: quizInfo.round });
     const showNotice = (t, c) => { const n = document.getElementById('result-notice'); n.innerText = t; n.style.color = c; n.style.display = "block"; };
     const showDanmaku = (m) => {
+// --- 修正箇所ここから ---
+        // 正解コメント（タイトルまたはアーティスト）であるか判定
+        const isCorrect = m.isTitle || m.isArtist;
+
+        // 主催者でない場合のみ、表示制限をかける
+        if (!isAdmin) {
+            // 正解コメントであり、かつ自分の発言ではない場合は、ここで処理を終了（表示しない）
+            if (isCorrect && m.userId !== myId) {
+                return;
+            }
+        }
+// --- 修正箇所ここまで ---
         const div = document.createElement('div'); div.className = `danmaku`; div.innerText = `${m.user}: ${m.text}`;
         div.style.top = (Math.random() * 70 + 10) + "%"; document.getElementById('screen-chat-overlay').appendChild(div);
         setTimeout(() => div.remove(), 4000);
@@ -721,11 +816,21 @@ function initYouTube() {
         let isQuiz = false; let isMosaic = false; let qText = ""; let aText = parts[1] || ""; let artText = parts[2] || "";
         if (parts[1] && parts[1].startsWith("!!")) { isQuiz = true; qText = parts[1].substring(2); aText = parts[2] || ""; artText = ""; }
         else if (parts[1] && parts[1].startsWith('""')) { isQuiz = true; isMosaic = true; qText = parts[1].substring(2); aText = parts[2] || ""; artText = ""; }
+// --- 修正箇所ここから ---
         const userSnap = await get(ref(db, 'game/users'));
         if(userSnap.exists()){
-            const updates = {}; Object.keys(userSnap.val()).forEach(uid => { updates[`game/users/${uid}/hasCorrectedTitle`] = false; });
+            const updates = {};
+            const userListData = userSnap.val(); // ユーザー全員のデータを取得
+            Object.keys(userListData).forEach(uid => {
+                const u = userListData[uid];
+                // 正解フラグのリセット
+                updates[`game/users/${uid}/hasCorrectedTitle`] = false;
+                // 今のスコアを「前回のスコア」として保存（これで参加者画面の0表示を防ぐ）
+                updates[`game/users/${uid}/prevScore`] = u.score || 0;
+            });
             await update(ref(db), updates);
         }
+        // --- 修正箇所ここまで ---
         await set(ref(db, 'game/signal_time'), 0);
         await set(ref(db, 'game/settings'), { videoId: vid, title: aText, artist: artText, round: nextRound, isQuizMode: isQuiz, isMosaicMode: isMosaic, questionText: qText, startTimeOffset: startTime, volumeRatio: volumeRatio });
         await sendSignal('show_video', isQuiz && !isQuiz);
@@ -774,11 +879,14 @@ function initYouTube() {
             const sec = (item.time - startTime) / 1000; div.innerHTML = `<span>${idx + 1}位: ${item.user}</span><span>${sec.toFixed(2)}s</span>`;
             rankList.appendChild(div); elements.push({ el: div, is1st: is1st, userId: item.id });
         });
-        for (let i = 0; i < elements.length; i++) { 
+// --- 修正箇所：renderRanking内 ---
+        // 10位（配列の最後）から1位（配列の先頭）に向かって逆順に表示させる
+        for (let i = elements.length - 1; i >= 0; i--) { 
             const target = elements[i]; 
             await new Promise(r => setTimeout(r, target.is1st ? 1500 : 400)); 
             target.el.classList.add('show'); 
             if (target.is1st) {
+// --- 修正箇所ここまで ---
                 rankPanel.classList.add('winner-anim');
                 if (isAdmin && !window.is1stPointAwarded) {
                     window.is1stPointAwarded = true;
@@ -831,6 +939,7 @@ function initYouTube() {
         };
 // --- 修正箇所ここまで ---
         document.getElementById('btn-send-answer').onclick = sendAnswer;
+        document.getElementById('btn-pause').onclick = () => sendSignal('pause_video', true);
         document.getElementById('answer-input').onkeypress = (e) => { if(e.key === 'Enter') sendAnswer(); };
         document.getElementById('mute-btn').onclick = toggleMute;
         document.getElementById('volume-slider').oninput = (e) => updateVolumeUI(e.target.value);
