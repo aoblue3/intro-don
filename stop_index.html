@@ -1,4 +1,4 @@
-+<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
@@ -248,6 +248,7 @@
             <div id="result-notice"></div>
             <input type="text" id="answer-input" placeholder="答えを入力！">
             <button id="btn-send-answer" style="background:var(--primary-color); color:white; border:none; border-radius:25px; padding:10px 25px; cursor:pointer;">送信</button>
+            <button id="fullscreen-btn" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">全画面</button>
             <div class="volume-controls">
                 <span id="mute-btn" style="cursor:pointer;">🔈</span>
                 <input type="range" id="volume-slider" min="0" max="100" value="50">
@@ -413,6 +414,24 @@ function initYouTube() {
     function listenToSignals() {
         if (window.__signals_initialized) return;
         window.__signals_initialized = true;
+        // --- 修正箇所ここから ---
+        // 全画面ボタンの動作設定
+        const fsBtn = document.getElementById('fullscreen-btn');
+        if (fsBtn) {
+            fsBtn.addEventListener('click', () => {
+                const el = document.documentElement;
+                if (!document.fullscreenElement) {
+                    if (el.requestFullscreen) { el.requestFullscreen(); }
+                    else if (el.webkitRequestFullscreen) { el.webkitRequestFullscreen(); }
+                    fsBtn.textContent = "解除";
+                } else {
+                    if (document.exitFullscreen) { document.exitFullscreen(); }
+                    else if (document.webkitExitFullscreen) { document.webkitExitFullscreen(); }
+                    fsBtn.textContent = "全画面";
+                }
+            });
+        }
+// --- 修正箇所ここまで ---
 
         onValue(ref(db, 'game/settings'), (snap) => {
             const data = snap.val();
