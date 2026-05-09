@@ -162,7 +162,8 @@
         <button class="admin-btn" id="btn-video-on" style="background:#007bff">画面ON</button>
         <button class="admin-btn" id="btn-video-off" style="background:#666">画面OFF</button>
         ｜ <button class="admin-btn" id="btn-open-q-modal" style="background:#555">問題追加</button>
-        ｜ <button class="admin-btn" id="btn-reset-all" style="background:#444">全リセット</button>
+        ｜<button id="admin-kick-all" style="background:#ff4444; color:white; border:none; border-radius:5px; padding:5px 10px; cursor:pointer; margin-left:10px;">全員退出</button>
+         <button class="admin-btn" id="btn-reset-all" style="background:#444">全リセット</button>
         ｜ <input type="range" id="admin-seekbar" min="0" max="100" value="0">
         <span id="admin-time-display" style="color:#0f0; font-size:12px; font-family:monospace; min-width:35px;">0:00</span>
     </div>
@@ -436,6 +437,14 @@ function initYouTube() {
         onValue(ref(db, 'game/settings'), (snap) => {
             const data = snap.val();
             if(!data) return;
+            // --- 修正箇所ここから ---
+            // 強制退出コマンドのチェック（主催者以外）
+            if (!isAdmin && data.forceExit) {
+                alert('主催者によって退出させられました。');
+                window.location.href = 'index.html'; // 退出先のURL
+                return;
+            }
+            // --- 修正箇所ここまで ---
             quizInfo = data;
             
             const slider = document.getElementById('volume-slider');
@@ -983,6 +992,11 @@ const scoreDisplay = u.isAdmin ? "" : `<b>${displayScore} pt</b>`;
         document.getElementById('btn-video-off').onclick = () => sendSignal('show_video', false);
         document.getElementById('btn-reset-all').onclick = resetRoomData;
         document.getElementById('btn-next-quiz').onclick = loadNextFromReserve;
+        document.getElementById('admin-kick-all').onclick = () => {
+            if(confirm('自分以外の全員を退出させますか？')) {
+                update(ref(db, 'game/settings'), { forceExit: Date.now() });
+            }
+        };
 
         const adminSeekbar = document.getElementById('admin-seekbar');
         const adminTimeDisp = document.getElementById('admin-time-display');
