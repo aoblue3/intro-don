@@ -377,6 +377,7 @@ function initYouTube() {
             // 修正箇所2：プレイヤーの「通信先」だけをnocookieに固定する
             host: 'https://www.youtube-nocookie.com',
 /* 修正箇所：window.onYouTubeIframeAPIReady 内の playerVars */
+            /* 修正箇所：window.onYouTubeIframeAPIReady 内の playerVars */
             playerVars: { 
                 'controls': 0,
                 'disablekb': 1,
@@ -385,12 +386,14 @@ function initYouTube() {
                 'mute': 1,
                 'origin': origin,
                 'enablejsapi': 1,
-                'playsinline': 1
+                'widget_referrer': origin,
+                'playsinline': 1,
                 // 修正箇所：Firefox系で広告を誘発する恐れのある iv_load_policy, cc_load_policy, widget_host を削除し、
                 // ブラウザの「トラッキング防止」との競合を最小限に抑える
             },
             events: { 
                 'onReady': () => listenToSignals(),
+                'onStateChange': (e) => onPlayerStateChange(e),
                 'onError': (e) => {
                     document.getElementById('error-message').style.display = "block";
                     window.isCurrentVideoError = true;
