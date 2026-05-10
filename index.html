@@ -478,7 +478,11 @@ function initYouTube() {
             if(data.videoId && data.videoId !== lastVideoId) {
                 lastVideoId = data.videoId;
                 if (player && player.cueVideoById) {
-                    player.cueVideoById({ videoId: data.videoId, startSeconds: data.startTimeOffset || 0 });
+                    player.cueVideoById({ 
+                        videoId: data.videoId, 
+                        startSeconds: data.startTimeOffset || 0,
+                        host: 'https://www.youtube-nocookie.com' // ここで対策設定を再適用する
+                    });
                 }
                 document.getElementById('error-message').style.display = "none";
                 window.isCurrentVideoError = false;
