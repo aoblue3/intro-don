@@ -377,54 +377,45 @@ function initYouTube() {
 }
 
 window.onYouTubeIframeAPIReady = () => {
-    if (player) return;
+        if (player) return;
 
-    // Firefoxでのセキュリティエラー(CORS)を防ぐために現在のドメインを明示
-    const origin = window.location.origin;
+        // 過去の成功例に基づいた、厳密なorigin生成
+        let origin = window.location.protocol + '//' + window.location.hostname;
+        if (window.location.port) origin += ':' + window.location.port;
 
-    player = new YT.Player('player', {
-        height: '100%',
-        width: '100%',
-        videoId: 'dQw4w9WgXcQ', 
-        playerVars: { 
-            'controls': 0,
-            'disablekb': 1,
-            'rel': 0,
-            'autoplay': 1,
-            'mute': 1,
-            // ここから下が重要
-            'origin': window.location.origin,
-            'widget_referrer': window.location.origin,
-            'enablejsapi': 1,
-            'content_filter': 1, // コンテンツフィルタを有効化（Firefoxで安定しやすい）
-            'iv_load_policy': 3  // アノテーション（注釈）を非表示にして通信を減らす
-        },
-        events: { 
-            'onReady': (e) => {
-                // 1. まずミュート解除と音量設定
-                e.target.unMute();
-                const vol = document.getElementById('volume-slider').value;
-                e.target.setVolume(vol * (quizInfo.volumeRatio || 1.0));
-
-                // 2. Firefox対策：0.2〜0.5秒ほど待ってから実行
-                setTimeout(() => {
-                    // 動画を再生
-                    e.target.playVideo();
-                    
-                    // Firebaseの信号監視（listenToSignals）を開始
-                    if (typeof listenToSignals === 'function') {
-                        listenToSignals();
-                    }
-                }, 500); // 500ミリ秒（0.5秒）のバッファ
+        player = new YT.Player('player', {
+            height: '100%',
+            width: '100%',
+            videoId: 'dQw4w9WgXcQ', // 初期動画ID
+            host: 'https://www.youtube.com', // 成功例と同じ標準ドメイン
+            playerVars: { 
+                'controls': 0,
+                'disablekb': 1,
+                'rel': 0,
+                'autoplay': 1,
+                'mute': 1,
+                'origin': origin,
+                'enablejsapi': 1,
+                'widget_referrer': origin,
+                'playsinline': 1,
+                // 不要なパラメータ（iv_load_policy等）を一切排除し、
+                // Firefoxのトラッキング防止に引っかからない「最小構成」にする
             },
-            'onError': (e) => {
-                console.error("YouTube Player Error:", e.data);
-                // エラー時は「読み込み失敗」としてフラグを立てる
-                window.isCurrentVideoError = true;
+            events: { 
+                'onReady': () => {
+                    if (typeof listenToSignals === 'function') listenToSignals();
+                },
+                'onStateChange': (e) => {
+                    if (typeof onPlayerStateChange === 'function') onPlayerStateChange(e);
+                },
+                'onError': (e) => {
+                    const errEl = document.getElementById('error-message');
+                    if (errEl) errEl.style.display = "block";
+                    window.isCurrentVideoError = true;
+                }
             }
-        }
-    });
-};
+        });
+    };
     // --- 修正：ここまで ---
 
     const updateVolumeUI = (val) => {
