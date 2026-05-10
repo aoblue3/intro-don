@@ -367,14 +367,16 @@ function initYouTube() {
         else { onYouTubeIframeAPIReady(); }
     }
 
-window.onYouTubeIframeAPIReady = () => {
+    window.onYouTubeIframeAPIReady = () => {
         if (player) return;
         let origin = window.location.protocol + '//' + window.location.hostname;
         if (window.location.port) origin += ':' + window.location.port;
 
         player = new YT.Player('player', {
             height: '100%', width: '100%', videoId: 'dQw4w9WgXcQ',
+            // 修正箇所2：プレイヤーの「通信先」だけをnocookieに固定する
             host: 'https://www.youtube-nocookie.com',
+/* 修正箇所：window.onYouTubeIframeAPIReady 内の playerVars */
             playerVars: { 
                 'controls': 0,
                 'disablekb': 1,
@@ -384,11 +386,12 @@ window.onYouTubeIframeAPIReady = () => {
                 'origin': origin,
                 'enablejsapi': 1,
                 'playsinline': 1
-                // 不要なパラメータ（iv_load_policy, cc_load_policy等）を完全に削除しました
+                // 修正箇所：Firefox系で広告を誘発する恐れのある iv_load_policy, cc_load_policy, widget_host を削除し、
+                // ブラウザの「トラッキング防止」との競合を最小限に抑える
             },
             events: { 
                 'onReady': () => listenToSignals(),
-                'onStateChange': onPlayerStateChange, // 状態検知に必要
+                'onStateChange': (e) => onPlayerStateChange(e),
                 'onError': (e) => {
                     document.getElementById('error-message').style.display = "block";
                     window.isCurrentVideoError = true;
