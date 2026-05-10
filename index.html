@@ -141,7 +141,9 @@
     <div class="setup-box">
         <h2 style="margin:0 0 20px 0;">INTRO DON!</h2>
         <input type="text" id="user-name" placeholder="名前を入力" style="width:100%; padding:12px; margin-bottom:15px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
-        <button id="btn-join-player" class="btn-join">参加する</button>
+        <button id="btn-join-player" class="btn-join" style="display: none;">参加する</button>
+        <div id="closed-message" style="color: red; font-size: 14px; font-weight: bold; margin: 10px 0;"></div>
+        <button id="admin-close-lock" style="display: block; width: 100%; margin-bottom: 10px; opacity: 0.5; font-size: 10px; border: none; background: none; cursor: pointer;">[管理設定: 部屋の開放/閉鎖]</button>
         <span id="btn-admin-login" class="admin-login-link">🔧 主催者ログイン</span>
     </div>
 </div>
@@ -432,6 +434,17 @@ function initYouTube() {
                 }
             });
         }
+// --- 修正箇所ここから ---
+        // 全画面状態の変化を監視してDBに報告
+        document.addEventListener('fullscreenchange', () => {
+            const isFull = !!document.fullscreenElement;
+            update(ref(db, `game/users/${myId}`), { isFullscreen: isFull });
+        });
+        // Safari用
+        document.addEventListener('webkitfullscreenchange', () => {
+            const isFull = !!document.webkitFullscreenElement;
+            update(ref(db, `game/users/${myId}`), { isFullscreen: isFull });
+        });
 // --- 修正箇所ここまで ---
 
         onValue(ref(db, 'game/settings'), (snap) => {
@@ -445,6 +458,18 @@ function initYouTube() {
                 return;
             }
             // --- 修正箇所ここまで ---
+            // 閉鎖モードのチェック（参加中に閉鎖された場合）
+            const joinBtn = document.getElementById('btn-join-player');
+            const closeMsg = document.getElementById('closed-message');
+            if (joinBtn) {
+                if (data.isClosed) {
+                    joinBtn.style.setProperty('display', 'none', 'important');
+                    if (closeMsg) closeMsg.innerText = "【現在、このルームは閉鎖されています】";
+                } else {
+                    joinBtn.style.setProperty('display', 'block', 'important');
+                    if (closeMsg) closeMsg.innerText = "";
+                }
+            }
             quizInfo = data;
             
             const slider = document.getElementById('volume-slider');
@@ -691,36 +716,41 @@ function initYouTube() {
                 const isOnline = u.isOnline === true;
                 const statusText = isOnline ? "" : " <small style='color:#888;'>(離席)</small>";
                 div.style.opacity = isOnline ? "1" : "0.5";
-// --- 修正箇所ここから ---
+             // --- 修正箇所ここから ---
 
-// 1. 表示用のスコアを決定する
-let displayScore = u.score || 0;
+             // 1. 表示用のスコアを決定する
+             let displayScore = u.score || 0;
 
-// 参加者、かつ答えが表示される前（isRevealedGlobalがfalse）の間
-if (!isAdmin && !isRevealedGlobal) {
-    // 前回の確定スコア（prevScore）がある場合はそれを表示
-    // 無い場合（初参加など）は現在のスコアを表示するが、
-    // 基本的に次の曲へ行く時に prevScore = score と保存する運用を想定
-    if (u.prevScore !== undefined) {
-        displayScore = u.prevScore;
-    }
-}
+             // 参加者、かつ答えが表示される前（isRevealedGlobalがfalse）の間
+             if (!isAdmin && !isRevealedGlobal) {
+             // 前回の確定スコア（prevScore）がある場合はそれを表示
+             // 無い場合（初参加など）は現在のスコアを表示するが、
+             // 基本的に次の曲へ行く時に prevScore = score と保存する運用を想定
+             if (u.prevScore !== undefined) {
+             displayScore = u.prevScore;
+             }
+             }
 
-// 2. 王冠の表示判定（表示されているスコアに基づき、参加者画面でも答え公開後は反映）
-const isTop = (displayScore > 0 && displayScore === maxScore);
-const crown = isTop ? '<span class="crown">👑</span>' : '';
+             // 2. 王冠の表示判定（表示されているスコアに基づき、参加者画面でも答え公開後は反映）
+             const isTop = (displayScore > 0 && displayScore === maxScore);
+             const crown = isTop ? '<span class="crown">👑</span>' : '';
 
-// 3. 正解マーク
-const correctMark = ((isAdmin || isRevealedGlobal) && u.hasCorrectedTitle) ? '<span class="correct-mark">正解</span>' : '';
+             // 3. 正解マーク
+             const correctMark = ((isAdmin || isRevealedGlobal) && u.hasCorrectedTitle) ? '<span class="correct-mark">正解</span>' : '';
 
-const scoreDisplay = u.isAdmin ? "" : `<b>${displayScore} pt</b>`;
+             // 4. 全画面ステータスの判定（追加）
+             const fullStatus = u.isFullscreen ? '<span style="color:green; font-size:10px; margin-left:5px; font-weight:bold;">[全画面]</span>' : '<span style="color:#aaa; font-size:10px; margin-left:5px;">[通常]</span>';
 
-// --- 修正箇所ここまで ---
-                // BANボタン：管理者が自分以外の一般ユーザーに対して表示する
-                const banBtn = (isAdmin && !u.isAdmin) ? `<button onclick="banUser('${u.id}')" style="font-size:10px; margin-left:5px; padding:2px 4px; border-radius:4px; border:none; background:#ff4d4d; color:white; cursor:pointer;">BAN</button>` : '';
+             const scoreDisplay = u.isAdmin ? "" : `<b>${displayScore} pt</b>`;
 
-                div.innerHTML = `<div>${crown}${u.name}${u.isAdmin ? " <small>(HOST)</small>":""}${statusText}${correctMark}${banBtn}</div>${scoreDisplay}`;
-                list.appendChild(div);
+             // --- 修正箇所ここまで ---
+             // BANボタン：管理者が自分以外の一般ユーザーに対して表示する
+             const banBtn = (isAdmin && !u.isAdmin) ? `<button onclick="banUser('${u.id}')" style="font-size:10px; margin-left:5px; padding:2px 4px; border-radius:4px; border:none; background:#ff4d4d; color:white; cursor:pointer;">BAN</button>` : '';
+
+             // --- 修正箇所ここから ---
+             div.innerHTML = `<div>${crown}${u.name}${u.isAdmin ? " <small>(HOST)</small>":""}${statusText}${fullStatus}${correctMark}${banBtn}</div>${scoreDisplay}`;
+             // --- 修正箇所ここまで ---
+             list.appendChild(div);
             });
             const onlineCount = users.filter(u => u.isOnline === true && !u.isAdmin).length;
             document.getElementById('player-count').innerText = `${onlineCount} ONLINE`;
@@ -938,8 +968,23 @@ const scoreDisplay = u.isAdmin ? "" : `<b>${displayScore} pt</b>`;
     };
 
     document.addEventListener('DOMContentLoaded', () => {
+        // 全ブラウザ共通：部屋の閉鎖状態を常に監視する
+        onValue(ref(db, 'game/settings'), (snap) => {
+            const settings = snap.val() || {};
+            const joinBtn = document.getElementById('btn-join-player');
+            const closeMsg = document.getElementById('closed-message');
+
+            if (settings.isClosed) {
+                // 閉鎖中の場合：絶対に表示させない
+                if (joinBtn) joinBtn.style.setProperty('display', 'none', 'important');
+                if (closeMsg) closeMsg.innerText = "【現在、このルームは閉鎖されています】";
+            } else {
+                // 開放中の場合：ここで初めてボタンを表示させる
+                if (joinBtn) joinBtn.style.setProperty('display', 'block', 'important');
+                if (closeMsg) closeMsg.innerText = "";
+            }
+        });
         document.getElementById('btn-join-player').onclick = () => prepareJoin('player');
-// --- 修正箇所ここから ---
         document.getElementById('btn-admin-login').onclick = async () => {
             const pass = prompt("パスワードを入力してください");
             if (!pass) return;
@@ -965,7 +1010,6 @@ const scoreDisplay = u.isAdmin ? "" : `<b>${displayScore} pt</b>`;
                 alert("通信エラーが発生しました。");
             }
         };
-// --- 修正箇所ここまで ---
         document.getElementById('btn-send-answer').onclick = sendAnswer;
         document.getElementById('btn-pause').onclick = () => sendSignal('pause_video', true);
         document.getElementById('answer-input').onkeypress = (e) => { if(e.key === 'Enter') sendAnswer(); };
@@ -997,6 +1041,21 @@ const scoreDisplay = u.isAdmin ? "" : `<b>${displayScore} pt</b>`;
                 update(ref(db, 'game/settings'), { forceExit: Date.now() });
             }
         };
+        // --- 修正箇所ここから ---
+        document.getElementById('admin-close-lock').onclick = async () => {
+            const pass = prompt("主催者パスワードを入力してください");
+            if (!pass) return;
+            const snapshot = await get(ref(db, 'admin/password'));
+            const correctPass = snapshot.val();
+            if (pass === String(correctPass)) {
+                const isNowClosed = document.getElementById('btn-join-player').style.display === "none";
+                update(ref(db, 'game/settings'), { isClosed: !isNowClosed });
+                alert(!isNowClosed ? "ルームを閉鎖しました。" : "ルームを開放しました。");
+            } else {
+                alert("パスワードが違います");
+            }
+        };
+// --- 修正箇所ここまで ---
 
         const adminSeekbar = document.getElementById('admin-seekbar');
         const adminTimeDisp = document.getElementById('admin-time-display');
