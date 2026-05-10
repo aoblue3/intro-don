@@ -371,8 +371,8 @@ function initYouTube() {
     window.onYouTubeIframeAPIReady = () => {
         if (player) return;
         
-        // Firefoxでのドメイン判定エラーを防ぐための安全な取得
-        const origin = window.location.origin || (window.location.protocol + '//' + window.location.hostname + (window.location.port ? ':' + window.location.port : ''));
+        // originをブラウザに任せず、より確実な形式で生成
+        const origin = window.location.protocol + '//' + window.location.hostname;
 
         player = new YT.Player('player', {
             height: '100%', width: '100%', videoId: 'dQw4w9WgXcQ',
@@ -387,10 +387,10 @@ function initYouTube() {
                 'enablejsapi': 1,
                 'widget_referrer': origin,
                 'playsinline': 1,
-                'iv_load_policy': 3 // Firefoxでの干渉を抑える設定
+                'iv_load_policy': 3,
+                'modestbranding': 1
             },
             events: { 
-                // 関数が存在するか確認してから呼び出す（ReferenceError対策）
                 'onReady': () => {
                     if (typeof listenToSignals === 'function') listenToSignals();
                 },
