@@ -361,55 +361,56 @@
         initYouTube();
     }
 
+// --- YouTube API 初期化 (Firefox安定版) ---
 function initYouTube() {
-        // 修正箇所1：スクリプトのURLは公式の標準（www.youtube.com）に戻す
-        if (!window.YT) { const tag = document.createElement('script'); tag.src = "https://www.youtube.com/iframe_api"; document.body.appendChild(tag); } 
-        else { onYouTubeIframeAPIReady(); }
+    if (!window.YT) {
+        const tag = document.createElement('script');
+        tag.src = "https://www.youtube.com/iframe_api";
+        const firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+    } else {
+        onYouTubeIframeAPIReady();
     }
+}
 
-// --- 修正：ここから ---
 window.onYouTubeIframeAPIReady = () => {
-        if (player) return;
+    if (player) return;
 
-        // 過去の成功例に基づいた、厳密なorigin生成
-        let origin = window.location.protocol + '//' + window.location.hostname;
-        if (window.location.port) origin += ':' + window.location.port;
+    // Firefoxでのセキュリティエラー(CORS)を防ぐために現在のドメインを明示
+    const origin = window.location.origin;
 
-        player = new YT.Player('player', {
-            height: '100%',
-            width: '100%',
-            videoId: 'dQw4w9WgXcQ', // 初期動画ID
-            host: 'https://www.youtube.com', // 成功例と同じ標準ドメイン
-            playerVars: { 
-                'controls': 0,
-                'disablekb': 1,
-                'rel': 0,
-                'autoplay': 1,
-                'mute': 1,
-                'origin': origin,
-                'enablejsapi': 1,
-                'widget_referrer': origin,
-                'playsinline': 1,
-                // 不要なパラメータ（iv_load_policy等）を一切排除し、
-                // Firefoxのトラッキング防止に引っかからない「最小構成」にする
+    player = new YT.Player('player', {
+        height: '100%',
+        width: '100%',
+        videoId: 'dQw4w9WgXcQ', 
+        playerVars: { 
+            'controls': 0,
+            'disablekb': 1,
+            'rel': 0,
+            'autoplay': 1,
+            'mute': 1,
+            'origin': origin,       // Firefoxではこれが無いと遮断される場合がある
+            'enablejsapi': 1,
+            'playsinline': 1,
+            'widget_referrer': origin
+        },
+        events: { 
+            'onReady': (e) => {
+                e.target.unMute();
+                // 接続直後に音量を反映させる（スライダーの値に基づき）
+                const vol = document.getElementById('volume-slider').value;
+                e.target.setVolume(vol * (quizInfo.volumeRatio || 1.0));
+                
+                if (typeof listenToSignals === 'function') listenToSignals();
             },
-            events: { 
-                'onReady': () => {
-                    if (typeof listenToSignals === 'function') listenToSignals();
-                },
-                // テスト：一時的に監視を止める
-'onStateChange': (e) => {
-    // 一時的にコメントアウトして動作確認
-    // if (typeof onPlayerStateChange === 'function') onPlayerStateChange(e);
-},
-                'onError': (e) => {
-                    const errEl = document.getElementById('error-message');
-                    if (errEl) errEl.style.display = "block";
-                    window.isCurrentVideoError = true;
-                }
+            'onError': (e) => {
+                console.error("YouTube Player Error:", e.data);
+                window.isCurrentVideoError = true;
+                // エラー時は自動的に次の曲へ行けるようフラグを立てる
             }
-        });
-    };
+        }
+    });
+};
     // --- 修正：ここまで ---
 
     const updateVolumeUI = (val) => {
@@ -1126,6 +1127,16 @@ window.onYouTubeIframeAPIReady = () => {
             document.getElementById('mq-url').value = ""; document.getElementById('mq-title').value = ""; document.getElementById('mq-artist').value = ""; document.getElementById('mq-question').value = "";
             qModal.style.display = 'none';
         };
+        // --- ここから追加：全画面状態の監視 ---
+        document.addEventListener('fullscreenchange', () => {
+            if (myId) {
+                // 現在全画面かどうかを判定（nullでなければ全画面中）
+                const isFS = !!document.fullscreenElement;
+                // Firebaseの自分のデータに状態を書き込む
+                update(ref(db, `game/users/${myId}`), { isFullscreen: isFS });
+            }
+        });
+        // --- ここまで追加 ---
     });
     // --- ここから追加 ---
     /**
