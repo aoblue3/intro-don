@@ -362,18 +362,22 @@
     }
 
 function initYouTube() {
-        // 修正箇所1：スクリプトのURLは公式の標準（www.youtube.com）に戻す（動作不全回避のため）
-        if (!window.YT) { const tag = document.createElement('script'); tag.src = "https://www.youtube.com/iframe_api"; document.body.appendChild(tag); } 
+        // 修正箇所1：スクリプトのURLを nocookie ドメインに統一して干渉を防ぐ
+        if (!window.YT) { const tag = document.createElement('script'); tag.src = "https://www.youtube-nocookie.com/iframe_api"; document.body.appendChild(tag); } 
         else { onYouTubeIframeAPIReady(); }
-}
+    }
 
-window.onYouTubeIframeAPIReady = () => {
+    window.onYouTubeIframeAPIReady = () => {
         if (player) return;
-        let origin = window.location.origin; // 修正箇所：Firefoxでの不整合を防ぐため location.origin を使用
+        let origin = window.location.protocol + '//' + window.location.hostname;
+        if (window.location.port) origin += ':' + window.location.port;
 
         player = new YT.Player('player', {
             height: '100%', width: '100%', videoId: 'dQw4w9WgXcQ',
-            host: 'https://www.youtube-nocookie.com', // プレイヤーの通信先のみnocookieに固定
+            // 修正箇所2：プレイヤーの「通信先」だけをnocookieに固定する
+            host: 'https://www.youtube-nocookie.com',
+/* 修正箇所：window.onYouTubeIframeAPIReady 内の playerVars */
+            /* 修正箇所：window.onYouTubeIframeAPIReady 内の playerVars */
             playerVars: { 
                 'controls': 0,
                 'disablekb': 1,
@@ -384,7 +388,8 @@ window.onYouTubeIframeAPIReady = () => {
                 'enablejsapi': 1,
                 'widget_referrer': origin,
                 'playsinline': 1,
-                'iv_load_policy': 3 // 修正箇所：Firefoxで広告を誘発する可能性のあるアノテーションをオフ
+                // 修正箇所：Firefox系で広告を誘発する恐れのある iv_load_policy, cc_load_policy, widget_host を削除し、
+                // ブラウザの「トラッキング防止」との競合を最小限に抑える
             },
             events: { 
                 'onReady': () => listenToSignals(),
@@ -395,7 +400,7 @@ window.onYouTubeIframeAPIReady = () => {
                 }
             }
         });
-};
+    };
 
     const updateVolumeUI = (val) => {
         const ratio = quizInfo.volumeRatio || 1.0;
