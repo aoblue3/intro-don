@@ -367,10 +367,12 @@ function initYouTube() {
         else { onYouTubeIframeAPIReady(); }
     }
 
-window.onYouTubeIframeAPIReady = () => {
+// --- 修正：ここから ---
+    window.onYouTubeIframeAPIReady = () => {
         if (player) return;
-        let origin = window.location.protocol + '//' + window.location.hostname;
-        if (window.location.port) origin += ':' + window.location.port;
+        
+        // Firefoxでのドメイン判定エラーを防ぐための安全な取得
+        const origin = window.location.origin || (window.location.protocol + '//' + window.location.hostname + (window.location.port ? ':' + window.location.port : ''));
 
         player = new YT.Player('player', {
             height: '100%', width: '100%', videoId: 'dQw4w9WgXcQ',
@@ -385,15 +387,15 @@ window.onYouTubeIframeAPIReady = () => {
                 'enablejsapi': 1,
                 'widget_referrer': origin,
                 'playsinline': 1,
-                'iv_load_policy': 3 // アノテーションをオフにしてFirefoxでの干渉を抑制
+                'iv_load_policy': 3 // Firefoxでの干渉を抑える設定
             },
             events: { 
-                // 修正：関数が存在するかチェックしてから呼び出すことで ReferenceError を防止
-                'onReady': () => { 
-                    if (typeof listenToSignals === 'function') listenToSignals(); 
+                // 関数が存在するか確認してから呼び出す（ReferenceError対策）
+                'onReady': () => {
+                    if (typeof listenToSignals === 'function') listenToSignals();
                 },
-                'onStateChange': (e) => { 
-                    if (typeof onPlayerStateChange === 'function') onPlayerStateChange(e); 
+                'onStateChange': (e) => {
+                    if (typeof onPlayerStateChange === 'function') onPlayerStateChange(e);
                 },
                 'onError': (e) => {
                     const errEl = document.getElementById('error-message');
@@ -403,6 +405,7 @@ window.onYouTubeIframeAPIReady = () => {
             }
         });
     };
+    // --- 修正：ここまで ---
 
     const updateVolumeUI = (val) => {
         const ratio = quizInfo.volumeRatio || 1.0;
