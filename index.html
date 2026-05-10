@@ -362,8 +362,8 @@
     }
 
 function initYouTube() {
-        // 修正箇所1：スクリプトのURLは公式の標準（www.youtube.com）に戻す
-        if (!window.YT) { const tag = document.createElement('script'); tag.src = "https://www.youtube.com/iframe_api"; document.body.appendChild(tag); } 
+        // 修正箇所1：スクリプトのURLを nocookie ドメインに統一して干渉を防ぐ
+        if (!window.YT) { const tag = document.createElement('script'); tag.src = "https://www.youtube-nocookie.com/iframe_api"; document.body.appendChild(tag); } 
         else { onYouTubeIframeAPIReady(); }
     }
 
