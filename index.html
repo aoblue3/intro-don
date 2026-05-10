@@ -397,9 +397,11 @@ window.onYouTubeIframeAPIReady = () => {
                 'onReady': () => {
                     if (typeof listenToSignals === 'function') listenToSignals();
                 },
-                'onStateChange': (e) => {
-                    if (typeof onPlayerStateChange === 'function') onPlayerStateChange(e);
-                },
+                // テスト：一時的に監視を止める
+'onStateChange': (e) => {
+    // 一時的にコメントアウトして動作確認
+    // if (typeof onPlayerStateChange === 'function') onPlayerStateChange(e);
+},
                 'onError': (e) => {
                     const errEl = document.getElementById('error-message');
                     if (errEl) errEl.style.display = "block";
