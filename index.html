@@ -367,17 +367,14 @@ function initYouTube() {
         else { onYouTubeIframeAPIReady(); }
     }
 
-    window.onYouTubeIframeAPIReady = () => {
+window.onYouTubeIframeAPIReady = () => {
         if (player) return;
         let origin = window.location.protocol + '//' + window.location.hostname;
         if (window.location.port) origin += ':' + window.location.port;
 
         player = new YT.Player('player', {
             height: '100%', width: '100%', videoId: 'dQw4w9WgXcQ',
-            // 修正箇所2：プレイヤーの「通信先」だけをnocookieに固定する
             host: 'https://www.youtube-nocookie.com',
-/* 修正箇所：window.onYouTubeIframeAPIReady 内の playerVars */
-            /* 修正箇所：window.onYouTubeIframeAPIReady 内の playerVars */
             playerVars: { 
                 'controls': 0,
                 'disablekb': 1,
@@ -388,14 +385,19 @@ function initYouTube() {
                 'enablejsapi': 1,
                 'widget_referrer': origin,
                 'playsinline': 1,
-                // 修正箇所：Firefox系で広告を誘発する恐れのある iv_load_policy, cc_load_policy, widget_host を削除し、
-                // ブラウザの「トラッキング防止」との競合を最小限に抑える
+                'iv_load_policy': 3 // アノテーションをオフにしてFirefoxでの干渉を抑制
             },
             events: { 
-                'onReady': () => listenToSignals(),
-                'onStateChange': (e) => onPlayerStateChange(e),
+                // 修正：関数が存在するかチェックしてから呼び出すことで ReferenceError を防止
+                'onReady': () => { 
+                    if (typeof listenToSignals === 'function') listenToSignals(); 
+                },
+                'onStateChange': (e) => { 
+                    if (typeof onPlayerStateChange === 'function') onPlayerStateChange(e); 
+                },
                 'onError': (e) => {
-                    document.getElementById('error-message').style.display = "block";
+                    const errEl = document.getElementById('error-message');
+                    if (errEl) errEl.style.display = "block";
                     window.isCurrentVideoError = true;
                 }
             }
