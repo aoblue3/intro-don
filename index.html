@@ -888,13 +888,12 @@ function initYouTube() {
             });
             await update(ref(db), updates);
         }
-        // --- 修正箇所ここまで ---
-        await set(ref(db, 'game/signal_time'), 0);
         // --- 修正箇所ここから ---
-        const settingsSnap = await get(ref(db, 'game/settings'));
-        const currentIsClosed = settingsSnap.val()?.isClosed || false;
-        await set(ref(db, 'game/settings'), { videoId: vid, title: aText, artist: artText, round: nextRound, isQuizMode: isQuiz, isMosaicMode: isMosaic, questionText: qText, startTimeOffset: startTime, volumeRatio: volumeRatio, isClosed: currentIsClosed });
-// --- 修正箇所ここまで ---
+        await set(ref(db, 'game/signal_time'), 0);
+        const currentSettingsSnap = await get(ref(db, 'game/settings'));
+        const keepClosed = currentSettingsSnap.val()?.isClosed || false;
+        await set(ref(db, 'game/settings'), { videoId: vid, title: aText, artist: artText, round: nextRound, isQuizMode: isQuiz, isMosaicMode: isMosaic, questionText: qText, startTimeOffset: startTime, volumeRatio: volumeRatio, isClosed: keepClosed });
+        // --- 修正箇所ここまで ---
         await sendSignal('show_video', isQuiz && !isQuiz);
         if (isQuiz) setTimeout(() => triggerPlayWithCountdown(15), 1500);
     };
