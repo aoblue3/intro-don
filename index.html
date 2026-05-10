@@ -368,27 +368,32 @@ function initYouTube() {
     }
 
 // --- 修正：ここから ---
-    window.onYouTubeIframeAPIReady = () => {
+window.onYouTubeIframeAPIReady = () => {
         if (player) return;
-        
+
+        // 過去の成功例に基づいた、厳密なorigin生成
+        let origin = window.location.protocol + '//' + window.location.hostname;
+        if (window.location.port) origin += ':' + window.location.port;
+
         player = new YT.Player('player', {
-            height: '100%', width: '100%', videoId: 'dQw4w9WgXcQ',
-            // nocookie ではなく通常の www に戻し、パラメータで「プライバシー」を主張する
-            host: 'https://www.youtube.com',
+            height: '100%',
+            width: '100%',
+            videoId: 'dQw4w9WgXcQ', // 初期動画ID
+            host: 'https://www.youtube.com', // 成功例と同じ標準ドメイン
             playerVars: { 
                 'controls': 0,
+                'disablekb': 1,
+                'rel': 0,
                 'autoplay': 1,
                 'mute': 1,
-                'origin': window.location.origin,
+                'origin': origin,
                 'enablejsapi': 1,
-                'rel': 0,
+                'widget_referrer': origin,
                 'playsinline': 1,
-                // YouTubeの内部Cookieエラーを回避しやすくするためのパラメータ群
-                'widgetid': 1,
-                'loading_eids': '',
-                'nohtml5': 1 
+                // 不要なパラメータ（iv_load_policy等）を一切排除し、
+                // Firefoxのトラッキング防止に引っかからない「最小構成」にする
             },
-            events: {
+            events: { 
                 'onReady': () => {
                     if (typeof listenToSignals === 'function') listenToSignals();
                 },
