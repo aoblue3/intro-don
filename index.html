@@ -363,12 +363,14 @@
 
 // --- YouTube API 初期化 (Firefox安定版) ---
 function initYouTube() {
-    if (!window.YT) {
+    // 既存のスクリプトがあるかチェック
+    const existingTag = document.querySelector('script[src*="iframe_api"]');
+    if (!existingTag) {
         const tag = document.createElement('script');
-        tag.src = "https://www.youtube.com/iframe_api";
+        tag.src = "https://www.youtube.com/iframe_api"; // 元に戻す
         const firstScriptTag = document.getElementsByTagName('script')[0];
         firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-    } else {
+    } else if (window.YT && window.YT.Player) {
         onYouTubeIframeAPIReady();
     }
 }
@@ -389,24 +391,35 @@ window.onYouTubeIframeAPIReady = () => {
             'rel': 0,
             'autoplay': 1,
             'mute': 1,
-            'origin': origin,       // Firefoxではこれが無いと遮断される場合がある
+            // ここから下が重要
+            'origin': window.location.origin,
+            'widget_referrer': window.location.origin,
             'enablejsapi': 1,
-            'playsinline': 1,
-            'widget_referrer': origin
+            'content_filter': 1, // コンテンツフィルタを有効化（Firefoxで安定しやすい）
+            'iv_load_policy': 3  // アノテーション（注釈）を非表示にして通信を減らす
         },
         events: { 
             'onReady': (e) => {
+                // 1. まずミュート解除と音量設定
                 e.target.unMute();
-                // 接続直後に音量を反映させる（スライダーの値に基づき）
                 const vol = document.getElementById('volume-slider').value;
                 e.target.setVolume(vol * (quizInfo.volumeRatio || 1.0));
-                
-                if (typeof listenToSignals === 'function') listenToSignals();
+
+                // 2. Firefox対策：0.2〜0.5秒ほど待ってから実行
+                setTimeout(() => {
+                    // 動画を再生
+                    e.target.playVideo();
+                    
+                    // Firebaseの信号監視（listenToSignals）を開始
+                    if (typeof listenToSignals === 'function') {
+                        listenToSignals();
+                    }
+                }, 500); // 500ミリ秒（0.5秒）のバッファ
             },
             'onError': (e) => {
                 console.error("YouTube Player Error:", e.data);
+                // エラー時は「読み込み失敗」としてフラグを立てる
                 window.isCurrentVideoError = true;
-                // エラー時は自動的に次の曲へ行けるようフラグを立てる
             }
         }
     });
