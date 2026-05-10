@@ -900,7 +900,11 @@ function initYouTube() {
         try {
             await remove(ref(db, 'game/chats'));
             await set(ref(db, 'game/signal_time'), 0);
-            await set(ref(db, 'game/settings'), { videoId: 'dQw4w9WgXcQ', title: '', artist: '', round: 0, isQuizMode: false, isMosaicMode: false, questionText: "", startTimeOffset: 0, volumeRatio: 1.0 });
+            // --- 修正箇所ここから ---
+            const settingsSnap = await get(ref(db, 'game/settings'));
+            const currentIsClosed = settingsSnap.val()?.isClosed || false;
+            await set(ref(db, 'game/settings'), { videoId: 'dQw4w9WgXcQ', title: '', artist: '', round: 0, isQuizMode: false, isMosaicMode: false, questionText: "", startTimeOffset: 0, volumeRatio: 1.0, isClosed: currentIsClosed });
+            // --- 修正箇所ここまで ---
             const snap = await get(ref(db, 'game/users'));
             if(snap.exists()) {
                 const usersData = snap.val();
