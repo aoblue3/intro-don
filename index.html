@@ -391,7 +391,6 @@ function initYouTube() {
             },
             events: { 
                 'onReady': () => listenToSignals(),
-                'onStateChange': (e) => onPlayerStateChange(e),
                 'onError': (e) => {
                     document.getElementById('error-message').style.display = "block";
                     window.isCurrentVideoError = true;
