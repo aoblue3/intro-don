@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>INTRO DON! - DX</title>
+    <title>INTRO DON! - Stable Edition</title>
     <style>
         :root { --primary-color: #007bff; --admin-color: #ff4757; --bg-color: #0f0f0f; --gold: #ffd700; --my-name-color: #00d4ff; --success-green: #28a745; }
         body { font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif; margin: 0; background: var(--bg-color); color: #fff; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -139,7 +139,7 @@
 
 <div id="setup-screen">
     <div class="setup-box">
-        <h2 style="margin:0 0 20px 0;">INTRO DON!DX</h2>
+        <h2 style="margin:0 0 20px 0;">INTRO DON!</h2>
         <input type="text" id="user-name" placeholder="名前を入力" style="width:100%; padding:12px; margin-bottom:15px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
         <button id="btn-join-player" class="btn-join" style="display: none;">参加する</button>
         <div id="closed-message" style="color: red; font-size: 14px; font-weight: bold; margin: 10px 0;"></div>
@@ -383,10 +383,8 @@ function initYouTube() {
                 'rel': 0,
                 'autoplay': 1,
                 'mute': 1,
-                'origin': origin,
                 'enablejsapi': 1,
-                'widget_referrer': origin,
-                'playsinline': 1,
+                'playsinline': 1
                 // 修正箇所：Firefox系で広告を誘発する恐れのある iv_load_policy, cc_load_policy, widget_host を削除し、
                 // ブラウザの「トラッキング防止」との競合を最小限に抑える
             },
@@ -480,8 +478,7 @@ function initYouTube() {
                 if (player && player.cueVideoById) {
                     player.cueVideoById({ 
                         videoId: data.videoId, 
-                        startSeconds: data.startTimeOffset || 0,
-                        host: 'https://www.youtube-nocookie.com' // ここで対策設定を再適用する
+                        startSeconds: data.startTimeOffset || 0 
                     });
                 }
                 document.getElementById('error-message').style.display = "none";
