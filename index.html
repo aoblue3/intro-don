@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
-    <title>INTRO DON! - Stable Edition</title>
+    <title>INTRO DON! - DX</title>
     <style>
         :root { --primary-color: #007bff; --admin-color: #ff4757; --bg-color: #0f0f0f; --gold: #ffd700; --my-name-color: #00d4ff; --success-green: #28a745; }
         body { font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif; margin: 0; background: var(--bg-color); color: #fff; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -140,7 +140,7 @@
 
 <div id="setup-screen">
     <div class="setup-box">
-        <h2 style="margin:0 0 20px 0;">INTRO DON!</h2>
+        <h2 style="margin:0 0 20px 0;">INTRO DON!DX</h2>
         <input type="text" id="user-name" placeholder="名前を入力" style="width:100%; padding:12px; margin-bottom:15px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
         <button id="btn-join-player" class="btn-join" style="display: none;">参加する</button>
         <div id="closed-message" style="color: red; font-size: 14px; font-weight: bold; margin: 10px 0;"></div>
@@ -363,30 +363,67 @@
     }
 
 // --- YouTube API 初期化 (Firefox安定版) ---
-// --- YouTube API 初期化 (完全バニラ状態) ---
 function initYouTube() {
-    const tag = document.createElement('script');
-    tag.src = "https://www.youtube.com/iframe_api";
-    const firstScriptTag = document.getElementsByTagName('script')[0];
-    firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+    // 既存のスクリプトがあるかチェック
+    const existingTag = document.querySelector('script[src*="iframe_api"]');
+    if (!existingTag) {
+        const tag = document.createElement('script');
+        tag.src = "https://www.youtube.com/iframe_api"; // 元に戻す
+        const firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+    } else if (window.YT && window.YT.Player) {
+        onYouTubeIframeAPIReady();
+    }
 }
 
 window.onYouTubeIframeAPIReady = () => {
-    player = new YT.Player('player', {
-        videoId: 'dQw4w9WgXcQ', // リック・アストリー（検証用）
-        playerVars: {
-            // 最低限の機能のみ。originもreferrerも書かない（APIの自動判定に任せる）
-            'enablejsapi': 1,
-            'autoplay': 1,
-            'mute': 1
-        },
-        events: {
-            'onReady': () => console.log("Player Ready (Vanilla Mode)")
-        }
-    });
-};
+        if (player) return;
 
-initYouTube();
+        // 過去の成功例に基づいた、厳密なorigin生成
+        let origin = window.location.protocol + '//' + window.location.hostname;
+        if (window.location.port) origin += ':' + window.location.port;
+
+        player = new YT.Player('player', {
+            height: '100%',
+            width: '100%',
+            videoId: 'dQw4w9WgXcQ', // 初期動画ID
+            host: 'https://www.youtube.com', // 成功例と同じ標準ドメイン
+            playerVars: { 
+                'controls': 0,
+                'disablekb': 1,
+                'rel': 0,
+                'autoplay': 1,
+                'mute': 1,
+                'origin': origin,
+                'enablejsapi': 1,
+                'widget_referrer': origin,
+                'playsinline': 1,
+                // 不要なパラメータ（iv_load_policy等）を一切排除し、
+                // Firefoxのトラッキング防止に引っかからない「最小構成」にする
+            },
+            events: { 
+                'onReady': (event) => {
+                    // --- 属性の追加 ---
+                    const iframe = event.target.getIframe();
+                    if (iframe) {
+                        // ブラウザに自動再生と暗号化メディアの許可を明示的に伝える
+                        iframe.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture');
+                    }
+                    // --- 既存の処理 ---
+                    if (typeof listenToSignals === 'function') listenToSignals();
+                },
+                'onStateChange': (e) => {
+                    if (typeof onPlayerStateChange === 'function') onPlayerStateChange(e);
+                },
+                'onError': (e) => {
+                    const errEl = document.getElementById('error-message');
+                    if (errEl) errEl.style.display = "block";
+                    window.isCurrentVideoError = true;
+                }
+            }
+        });
+    };
+    // --- 修正：ここまで ---
 
     const updateVolumeUI = (val) => {
         const ratio = quizInfo.volumeRatio || 1.0;
