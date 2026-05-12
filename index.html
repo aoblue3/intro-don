@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
-    <title>INTRO DON! - DX</title>
+    <title>INTRO DON! - Deluxe Edition</title>
     <style>
         :root { --primary-color: #007bff; --admin-color: #ff4757; --bg-color: #0f0f0f; --gold: #ffd700; --my-name-color: #00d4ff; --success-green: #28a745; }
         body { font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif; margin: 0; background: var(--bg-color); color: #fff; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -134,13 +134,14 @@
 
         /* 管理者以外にはエラーメッセージを非表示 */
         body:not(.is-admin-mode) #error-message { display: none !important; }
+        
     </style>
 </head>
 <body>
 
 <div id="setup-screen">
     <div class="setup-box">
-        <h2 style="margin:0 0 20px 0;">INTRO DON!DX</h2>
+        <h2 style="margin:0 0 20px 0;">INTRO DON! Deluxe Edition</h2>
         <input type="text" id="user-name" placeholder="名前を入力" style="width:100%; padding:12px; margin-bottom:15px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
         <button id="btn-join-player" class="btn-join" style="display: none;">参加する</button>
         <div id="closed-message" style="color: red; font-size: 14px; font-weight: bold; margin: 10px 0;"></div>
@@ -253,6 +254,7 @@
             <input type="text" id="answer-input" placeholder="答えを入力！">
             <button id="btn-send-answer" style="background:var(--primary-color); color:white; border:none; border-radius:25px; padding:10px 25px; cursor:pointer;">送信</button>
             <button id="fullscreen-btn" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">全画面</button>
+            <button id="pass-btn" onclick="sendPassSignal()" style="background:#888; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">パス</button>
             <div class="volume-controls">
                 <span id="mute-btn" style="cursor:pointer;">🔈</span>
                 <input type="range" id="volume-slider" min="0" max="100" value="50">
@@ -298,8 +300,15 @@
     const prepareJoin = async (role) => {
         try {
             const input = document.getElementById('user-name');
-            let baseName = input.value.trim();
-            if(!baseName) return alert("お名前を入力してください");
+            let rawInput = input.value.trim();
+            // HTMLやスクリプト記号を完全に無効化します
+            let baseName = rawInput
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+            if(!baseName) return alert("名前を入力してください");
             if(role === 'admin') { myId = "admin_master"; myName = baseName; } 
             else {
                 myId = localStorage.getItem('intro_don_uid') || 'u_' + Math.random().toString(36).substr(2, 9);
@@ -459,7 +468,6 @@ window.onYouTubeIframeAPIReady = () => {
                 }
             });
         }
-// --- 修正箇所ここから ---
         // 全画面状態の変化を監視してDBに報告
         document.addEventListener('fullscreenchange', () => {
             const isFull = !!document.fullscreenElement;
@@ -470,19 +478,16 @@ window.onYouTubeIframeAPIReady = () => {
             const isFull = !!document.webkitFullscreenElement;
             update(ref(db, `game/users/${myId}`), { isFullscreen: isFull });
         });
-// --- 修正箇所ここまで ---
 
         onValue(ref(db, 'game/settings'), (snap) => {
             const data = snap.val();
             if(!data) return;
-            // --- 修正箇所ここから ---
             // 強制退出コマンドのチェック（主催者以外）
             if (!isAdmin && data.forceExit) {
                 alert('主催者によって退出させられました。');
                 window.location.href = 'index.html'; // 退出先のURL
                 return;
             }
-            // --- 修正箇所ここまで ---
             // 閉鎖モードのチェック（参加中に閉鎖された場合）
             const joinBtn = document.getElementById('btn-join-player');
             const closeMsg = document.getElementById('closed-message');
@@ -495,7 +500,18 @@ window.onYouTubeIframeAPIReady = () => {
                     if (closeMsg) closeMsg.innerText = "";
                 }
             }
-            quizInfo = data;
+            // quizInfo = data; // ← ここにあったこの行を消して、下の「判定の後」へ移動させます。
+            
+            // --- リセット判定を先に行います ---
+            if (data.round !== quizInfo.round || data.videoId !== lastVideoId) {
+                hasPointedTitle = false;
+                hasPointedArtist = false;
+                roundPointsEarned = 0;
+                window.is1stPointAwarded = false; 
+            }
+
+            quizInfo = data; // ここで新しいデータに更新します
+            window.is1stPointAwarded = false; // 全体の1位フラグもリセット
             
             const slider = document.getElementById('volume-slider');
             updateVolumeUI(slider.value);
@@ -534,8 +550,15 @@ window.onYouTubeIframeAPIReady = () => {
                 
                 if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
 
-                hasPointedTitle = false; hasPointedArtist = false; isRevealedGlobal = false;
-                roundPointsEarned = 0;
+                // 動画IDではなく、Round番号の更新をトリガーにします
+                if (data.round !== quizInfo.round || data.videoId !== lastVideoId) {
+                    hasPointedTitle = false;
+                    hasPointedArtist = false;
+                    roundPointsEarned = 0;
+                    window.is1stPointAwarded = false; 
+                }
+                
+                isRevealedGlobal = false;
                 isFirstPlayOfRound = true;
                 document.getElementById('result-notice').style.display = "none";
                 document.getElementById('fastest-ranking').style.display = "none";
@@ -742,43 +765,44 @@ window.onYouTubeIframeAPIReady = () => {
                 const div = document.createElement('div');
                 div.className = `user-card ${u.id === myId ? 'is-me' : ''} ${u.isAdmin ? 'is-admin' : ''}`;
                 const isOnline = u.isOnline === true;
-                const statusText = isOnline ? "" : " <small style='color:#888;'>(離席)</small>";
+                if (u.id === myId) {
+                    hasPointedTitle = u.hasPointedTitle || false;
+                }
+
+                // 1. スコアの計算
+                let displayScore = u.score || 0;
+                if (!isAdmin && !isRevealedGlobal) {
+                    if (u.prevScore !== undefined) displayScore = u.prevScore;
+                }
+
+                // 2. 各種ステータス（記号・マーク）の準備
+                const isTop = (displayScore > 0 && displayScore === maxScore);
+                const crown = isTop ? '<span class="crown">👑</span>' : '';
+                const correctMark = ((isAdmin || isRevealedGlobal) && u.hasCorrectedTitle) ? '<span class="correct-mark">正解</span>' : '';
+                
+                // 全画面判定（ここで一括管理）
+                const fullStatus = u.isFullscreen 
+                    ? '<span style="color:green; font-size:10px; margin-left:5px; font-weight:bold;">[全画面]</span>' 
+                    : '<span style="color:#aaa; font-size:10px; margin-left:5px;">[通常]</span>';
+
+                // 3. パスと離席の組み立て
+                let statusParts = [];
+                if (!isOnline) statusParts.push("<small style='color:#888;'>(離席)</small>");
+                // 管理者または自分自身ならパス状態を表示
+                if ((isAdmin || u.id === myId) && u.isPass) {
+                    statusParts.push("<span style='color:#ff8c00; font-weight:bold; margin-left:5px;'>[パス]</span>");
+                }
+                const statusText = statusParts.length > 0 ? " " + statusParts.join(" ") : "";
+
+                // 4. ボタンとスコア表示
+                const banBtn = (isAdmin && !u.isAdmin) ? `<button onclick="banUser('${u.id}')" style="font-size:10px; margin-left:5px; padding:2px 4px; border-radius:4px; border:none; background:#ff4d4d; color:white; cursor:pointer;">BAN</button>` : '';
+                const scoreDisplay = u.isAdmin ? "" : `<b>${displayScore} pt</b>`;
+
+                // 5. HTMLを一気に組み立て
+                div.innerHTML = `<div>${crown}${u.name}${u.isAdmin ? " <small>(HOST)</small>":""}${statusText}${fullStatus}${correctMark}${banBtn}</div>${scoreDisplay}`;
+                
                 div.style.opacity = isOnline ? "1" : "0.5";
-             // --- 修正箇所ここから ---
-
-             // 1. 表示用のスコアを決定する
-             let displayScore = u.score || 0;
-
-             // 参加者、かつ答えが表示される前（isRevealedGlobalがfalse）の間
-             if (!isAdmin && !isRevealedGlobal) {
-             // 前回の確定スコア（prevScore）がある場合はそれを表示
-             // 無い場合（初参加など）は現在のスコアを表示するが、
-             // 基本的に次の曲へ行く時に prevScore = score と保存する運用を想定
-             if (u.prevScore !== undefined) {
-             displayScore = u.prevScore;
-             }
-             }
-
-             // 2. 王冠の表示判定（表示されているスコアに基づき、参加者画面でも答え公開後は反映）
-             const isTop = (displayScore > 0 && displayScore === maxScore);
-             const crown = isTop ? '<span class="crown">👑</span>' : '';
-
-             // 3. 正解マーク
-             const correctMark = ((isAdmin || isRevealedGlobal) && u.hasCorrectedTitle) ? '<span class="correct-mark">正解</span>' : '';
-
-             // 4. 全画面ステータスの判定（追加）
-             const fullStatus = u.isFullscreen ? '<span style="color:green; font-size:10px; margin-left:5px; font-weight:bold;">[全画面]</span>' : '<span style="color:#aaa; font-size:10px; margin-left:5px;">[通常]</span>';
-
-             const scoreDisplay = u.isAdmin ? "" : `<b>${displayScore} pt</b>`;
-
-             // --- 修正箇所ここまで ---
-             // BANボタン：管理者が自分以外の一般ユーザーに対して表示する
-             const banBtn = (isAdmin && !u.isAdmin) ? `<button onclick="banUser('${u.id}')" style="font-size:10px; margin-left:5px; padding:2px 4px; border-radius:4px; border:none; background:#ff4d4d; color:white; cursor:pointer;">BAN</button>` : '';
-
-             // --- 修正箇所ここから ---
-             div.innerHTML = `<div>${crown}${u.name}${u.isAdmin ? " <small>(HOST)</small>":""}${statusText}${fullStatus}${correctMark}${banBtn}</div>${scoreDisplay}`;
-             // --- 修正箇所ここまで ---
-             list.appendChild(div);
+                list.appendChild(div);
             });
             const onlineCount = users.filter(u => u.isOnline === true && !u.isAdmin).length;
             document.getElementById('player-count').innerText = `${onlineCount} ONLINE`;
@@ -796,7 +820,15 @@ window.onYouTubeIframeAPIReady = () => {
     }
 
     function normalize(t) { return t ? t.normalize("NFKC").replace(/[！!？?。．、，\s]/g, "").replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60)).toLowerCase() : ""; }
-
+    window.sendPassSignal = () => {
+        pushChat("（パス）", false, false, false, false);
+        if (myId) {
+            update(ref(db, `game/users/${myId}`), { isPass: true })
+                .then(() => {
+                    showNotice("パスしました", "#888");
+                });
+        }
+    };
     const sendAnswer = () => {
         const input = document.getElementById('answer-input'), text = input.value.trim();
         if(!text) return;
@@ -807,8 +839,23 @@ window.onYouTubeIframeAPIReady = () => {
             return str
                 .toLowerCase()
                 .replace(/[ぁ-ん]/g, (s) => String.fromCharCode(s.charCodeAt(0) + 0x60)) // ひらがなをカタカナに変換
+                .replace(/ヴ/g, 'ブ') // ヴをブに変換
                 .replace(/[\s　・．。、，,.\-]/g, ''); // 空白、中黒、ドット、記号をすべて削除
         };
+        // --- 修正箇所：類似度計算関数の追加 ---
+        const getSimilarity = (s1, s2) => {
+            const len1 = s1.length, len2 = s2.length;
+            if (len1 === 0 || len2 === 0) return 0;
+            const d = Array.from({ length: len1 + 1 }, (_, i) => Array.from({ length: len2 + 1 }, (_, j) => i === 0 ? j : j === 0 ? i : 0));
+            for (let i = 1; i <= len1; i++) {
+                for (let j = 1; j <= len2; j++) {
+                    const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
+                    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+                }
+            }
+            return 1 - d[len1][len2] / Math.max(len1, len2);
+        };
+        // ------------------------------------
 
         const normIn = clean(text);
         const titleCandidates = quizInfo.title.split('.').map(c => clean(c));
@@ -816,6 +863,21 @@ window.onYouTubeIframeAPIReady = () => {
 
         const isTitle = titleCandidates.some(c => c !== "" && c === normIn);
         const isArtist = artistCandidates.some(c => c !== "" && c === normIn);
+        // --- 修正箇所：おしい！判定（伏せ字 ＆ 秘匿フラグ送信） ---
+        if (!isTitle && !isArtist) {
+            const isNear = [...titleCandidates, ...artistCandidates].some(c => c !== "" && getSimilarity(c, normIn) >= 0.7);
+            if (isNear) {
+                showNotice("おしい！", "#ffa500");
+                
+                // 【変更点】伏せ字テキスト(masked)はここでは作らず、
+                // 第4引数に true (isNearフラグ) だけを渡して送信します。
+                pushChat(text, false, false, true); 
+                
+                input.value = "";
+                return; // ここで終了
+            }
+        }
+        // -------------------------------------------------------
         if (isTitle || isArtist) {
             // --- 修正箇所ここから ---
             const now = Date.now();
@@ -841,44 +903,110 @@ window.onYouTubeIframeAPIReady = () => {
                 else if (sec === 10) { titlePoints = 5; artistPoints = 1; }
             }
             if (isTitle && !hasPointedTitle) {
-                const addedPoints = Math.max(0, titlePoints - roundPointsEarned);
+                let addedPoints = Math.max(0, titlePoints - roundPointsEarned);
+
+                // 1位ボーナス重複バグ防止：
+                // すでに1位が出ているなら、点数が15点を超えないように制限します。
+                // これにより、5点の時は5点のまま、80点の時だけ15点（または10点）に抑えられます。
+                if (window.is1stPointAwarded) {
+                    addedPoints = Math.min(addedPoints, 15);
+                }
+
                 if (addedPoints > 0) {
-                    update(ref(db, `game/users/${myId}`), { score: increment(addedPoints), hasCorrectedTitle: true });
-                    showNotice(`正解！(+${addedPoints}pt)`, "var(--success-green)");
+                    update(ref(db, `game/users/${myId}`), { 
+                        score: increment(addedPoints), 
+                        hasCorrectedTitle: true,
+                        hasPointedTitle: true 
+                    });
+                    showCenterNotify(`正解！(+${addedPoints}pt / 合計${roundPointsEarned + addedPoints}pt)`, "var(--success-green)");
+                    showNotice(`正解！ ${text} (合計${roundPointsEarned + addedPoints}pt)`, "var(--success-green)");
+                    if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
+                    document.getElementById('quiz-title-mask').style.display = "none";
+                    document.getElementById('mosaic-overlay').style.display = "none";
                     roundPointsEarned += addedPoints;
-                } else if (quizInfo.isQuizMode && titlePoints === 0) { showNotice(`正解！（時間切れ）`, "#888"); }
-                hasPointedTitle = true;
+                } else if (quizInfo.isQuizMode && titlePoints === 0) { 
+                showCenterNotify(`正解！（時間切れ）`, "#888");
+                showNotice(`正解！ ${text} （時間切れ）`, "#888"); 
+                if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
+                document.getElementById('quiz-title-mask').style.display = "none";
+                document.getElementById('mosaic-overlay').style.display = "none";
+                }
             } else if (!quizInfo.isQuizMode && isArtist && !hasPointedArtist && !hasPointedTitle) {
                 const addedPoints = Math.max(0, artistPoints - roundPointsEarned);
                 if (addedPoints > 0) {
                     update(ref(db, `game/users/${myId}`), { score: increment(addedPoints) });
-                    showNotice(`アーティスト正解！(+${addedPoints}pt)`, "var(--gold)");
+                    showCenterNotify(`アーティスト正解！(+${addedPoints}pt)`, "var(--gold)");
+                    showNotice(`アーティスト正解！ ${text} (+${addedPoints}pt)`, "var(--gold)");
                     roundPointsEarned += addedPoints;
                 }
                 hasPointedArtist = true;
             }
-        }
+
+            // ★ここに追加：正解した時はここでチャットを送って「終了(return)」させる
+            pushChat(text, isTitle, isArtist);
+            input.value = "";
+            return; 
+        } // ←これが if (isTitle || isArtist) の閉じカッコです
+
+        // --- ここから下は「正解」でも「おしい」でもなかった時の処理 ---
         pushChat(text, isTitle, isArtist);
         input.value = "";
     };
 
-    const pushChat = (text, isTitle, isArtist) => push(ref(db, 'game/chats'), { userId: myId, user: myName, text, isTitle, isArtist, time: serverTimestamp(), round: quizInfo.round });
+    const pushChat = (text, isTitle, isArtist, isNear = false, isPass = false) => {
+        // displayOverride を廃止し、常に生の text を送ります
+        push(ref(db, 'game/chats'), { 
+            userId: myId, 
+            user: myName, 
+            text: text, // ここは常に生身の「もう恋なんてしない」などが送られる
+            isTitle, 
+            isArtist, 
+            isNear, 
+            isPass, // ここにパスフラグを追加
+            time: serverTimestamp(), 
+            round: quizInfo.round 
+        });
+    };
     const showNotice = (t, c) => { const n = document.getElementById('result-notice'); n.innerText = t; n.style.color = c; n.style.display = "block"; };
+    const showCenterNotify = (t, c) => { const p = document.getElementById('video-section'); if(!p) return; const n = document.createElement('div'); n.innerText = t; Object.assign(n.style, { position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontSize: '3rem', zIndex: '10000', backgroundColor: 'rgba(0,0,0,0.8)', color: c, padding: '20px', borderRadius: '15px', whiteSpace: 'nowrap' }); p.appendChild(n); setTimeout(() => n.remove(), 2000); };
     const showDanmaku = (m) => {
-// --- 修正箇所ここから ---
-        // 正解コメント（タイトルまたはアーティスト）であるか判定
-        const isCorrect = m.isTitle || m.isArtist;
+        // パス信号の場合、主催者以外には何も表示せず終了する
+        if (m.isPass && !isAdmin) return;
 
-        // 主催者でない場合のみ、表示制限をかける
-        if (!isAdmin) {
-            // 正解コメントであり、かつ自分の発言ではない場合は、ここで処理を終了（表示しない）
-            if (isCorrect && m.userId !== myId) {
-                return;
+        // 表示する文字を決める変数（最初は生文字を入れておく）
+        let displayText = m.text;
+
+        // --- おしい！時の出し分け処理 ---
+        if (m.isNear) {
+            if (isAdmin || m.userId === myId) {
+                // 主催者または本人の画面：生文字（おしい！）
+                displayText = `${m.text}（おしい！）`;
+            } else {
+                // 他の参加者の画面：伏せ字（おしい！）
+                const masked = "＊".repeat(m.text.length);
+                displayText = `${masked}（おしい！）`;
             }
         }
-// --- 修正箇所ここまで ---
-        const div = document.createElement('div'); div.className = `danmaku`; div.innerText = `${m.user}: ${m.text}`;
-        div.style.top = (Math.random() * 70 + 10) + "%"; document.getElementById('screen-chat-overlay').appendChild(div);
+
+        // --- 表示制限（カンニング防止） ---
+        if (!isAdmin) {
+            // 正解（Title/Artist）は、書いた本人以外には「流さない」
+            if ((m.isTitle || m.isArtist) && m.userId !== myId) {
+                return;
+            }
+            // 「おしい！」は上で伏せ字にしたので、全員に流してOK
+        }
+
+        // 実際に画面に表示する処理
+        const div = document.createElement('div'); 
+        div.className = `danmaku`; 
+        
+        // 主催者の画面でパス信号を受け取った場合のみ、名前を[パス]付きにする
+        const userNameDisplay = (isAdmin && m.isPass) ? `${m.user}[パス]` : m.user;
+
+        div.innerText = `${userNameDisplay}: ${displayText}`; // 決まった文字を入れる
+        div.style.top = (Math.random() * 70 + 10) + "%"; 
+        document.getElementById('screen-chat-overlay').appendChild(div);
         setTimeout(() => div.remove(), 4000);
     };
 
@@ -899,6 +1027,17 @@ window.onYouTubeIframeAPIReady = () => {
         if(!vid || vid.length !== 11) return alert("有効なURL/IDではありません");
         let volumeRatio = 1.0; const lastPart = parts[parts.length - 1];
         if (!isNaN(lastPart) && (lastPart.includes('.') || !isNaN(parseFloat(lastPart)))) volumeRatio = parseFloat(parts.pop());
+        // --- 修正箇所：パスと二重取り防止フラグをリセット ---
+        const usersSnap = await get(ref(db, 'game/users'));
+        if (usersSnap.exists()) {
+            const updates = {};
+            usersSnap.forEach(child => {
+                updates[`game/users/${child.key}/isPass`] = false;
+                updates[`game/users/${child.key}/hasPointedTitle`] = false; 
+                updates[`game/users/${child.key}/hasCorrectedTitle`] = false;
+            });
+            update(ref(db), updates);
+        }
         let isQuiz = false; let isMosaic = false; let qText = ""; let aText = parts[1] || ""; let artText = parts[2] || "";
         if (parts[1] && parts[1].startsWith("!!")) { isQuiz = true; qText = parts[1].substring(2); aText = parts[2] || ""; artText = ""; }
         else if (parts[1] && parts[1].startsWith('""')) { isQuiz = true; isMosaic = true; qText = parts[1].substring(2); aText = parts[2] || ""; artText = ""; }
@@ -940,8 +1079,18 @@ window.onYouTubeIframeAPIReady = () => {
             if(snap.exists()) {
                 const usersData = snap.val();
                 for (const key in usersData) { 
-                    if (usersData[key].isOnline === true) await update(ref(db, `game/users/${key}`), { score: 0, hasCorrectedTitle: false }); 
-                    else await remove(ref(db, `game/users/${key}`)); 
+                    if (usersData[key].isOnline === true) {
+                        // オンラインユーザーの全ステータス（スコア・パス・二重取り防止）をリセット
+                        await update(ref(db, `game/users/${key}`), { 
+                            score: 0, 
+                            hasCorrectedTitle: false,
+                            hasPointedTitle: false, // ここを追加
+                            isPass: false 
+                        });
+                    } else {
+                        // オフラインユーザーは削除
+                        await remove(ref(db, `game/users/${key}`)); 
+                    }
                 }
             }
             alert("リセット完了");
