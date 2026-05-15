@@ -134,7 +134,46 @@
 
         /* 管理者以外にはエラーメッセージを非表示 */
         body:not(.is-admin-mode) #error-message { display: none !important; }
-        
+        /* 選択肢ボタンの見た目 */
+        /* 1. ボタンを包むコンテナ（2列に並べるための親） */
+        #choice-container {
+            display: flex;
+            flex-wrap: wrap;      /* 折り返しを許可 */
+            gap: 10px;            /* ボタン同士の隙間 */
+            justify-content: center;
+            width: 100%;
+            max-width: 600px;     /* お好みの横幅に調整してください */
+            margin: 15px auto;    /* 中央寄せ */
+        }
+
+        /* 2. 選択肢ボタン本体 */
+        .choice-btn {
+            /* --- 横並びの設定 --- */
+            flex: 1 1 calc(50% - 10px); /* 幅を半分（50%）に設定。隙間分を引く */
+            box-sizing: border-box;
+    
+            /* --- 見た目の設定（あなたのコードをベースにしています） --- */
+            padding: 15px 10px; /* 上下15px, 左右10px */
+            font-size: 18px;
+            font-weight: bold;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            border: 2px solid var(--primary-color, #fff);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-shadow: 1px 1px 2px black;
+        }
+
+        .choice-btn:hover:not(:disabled) {
+            background: var(--primary-color, #444);
+            transform: scale(1.02);
+        }
+
+        .choice-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+}
     </style>
 </head>
 <body>
@@ -173,7 +212,10 @@
     </div>
     <div class="admin-row">
         <textarea id="reserve-area" placeholder="URL 曲名 アーティスト (クイズは URL !!問題 答え)"></textarea>
-        <button class="admin-btn" id="btn-next-quiz" style="background:var(--primary-color); height:50px;">次の曲へ</button>
+        <!-- 通常の次の曲へ：元の関数をonclickで直接呼び出し、通常モード(false)で実行します -->
+        <button class="admin-btn" id="btn-next-quiz" onclick="loadNextFromReserve(false)" style="background:var(--primary-color); height:50px;">次の曲へ</button>
+        <!-- ランダム次の曲へ：新しく作った関数をonclickで直接呼び出し、ランダムモードを実行します -->
+        <button class="admin-btn" id="btn-random-quiz" onclick="loadRandomFromReserve()" style="background:#6c757d; height:50px; margin-left:5px;">ランダム次の曲へ</button>
         <span id="admin-answer-preview" style="color:#0f0; font-size:12px; margin-left:10px;"></span>
     </div>
 </div>
@@ -188,6 +230,9 @@
                 <option value="normal">イントロ (URL*曲名*アーティスト)</option>
                 <option value="quiz">クイズ (URL*!!問題*答え)</option>
                 <option value="mosaic">モザイク (URL*""問題*答え)</option>
+                <!-- ★新モード2つを、指定の記号形式（$! / $"）の注釈付きで追加 -->
+                <option value="choice_quiz">選択肢クイズ (URL*$!問題*正解*誤答1*誤答2*誤答3)</option>
+                <option value="choice_mosaic">選択肢モザイク (URL*$"問題*正解*誤答1*誤答2*誤答3)</option>
             </select>
         </div>
         <div class="q-input-group">
@@ -210,6 +255,27 @@
                 <input type="text" id="mq-question" placeholder="画面に表示する問題文">
             </div>
         </div>
+
+        <!-- ★新設：選択肢モード（choice_quiz / choice_mosaic）の時だけJavaScript側で表示切り替えするエリア -->
+        <div id="mq-choice-inputs" style="display:none;">
+            <div class="q-input-group">
+                <label>選択肢1（★必ずここに「正解」を入力）</label>
+                <input type="text" id="mq-choice1" placeholder="正解の選択肢（※自動でシャッフルされます）">
+            </div>
+            <div class="q-input-group">
+                <label>選択肢2（誤答）</label>
+                <input type="text" id="mq-choice2" placeholder="間違いの選択肢1">
+            </div>
+            <div class="q-input-group">
+                <label>選択肢3（誤答）</label>
+                <input type="text" id="mq-choice3" placeholder="間違いの選択肢2">
+            </div>
+            <div class="q-input-group">
+                <label>選択肢4（誤答）</label>
+                <input type="text" id="mq-choice4" placeholder="間違いの選択肢3">
+            </div>
+        </div>
+
         <div class="q-input-group">
             <label>音量倍率 (0.1〜2.0 / 通常は1)</label>
             <input type="number" id="mq-vol" value="1.0" step="0.1">
@@ -227,6 +293,13 @@
         <div id="quiz-title-mask"></div>
         <div id="mosaic-overlay"></div>
         <div id="quiz-question-display"></div>
+        <!-- 選択肢クイズ用エリア：下方向にスライドさせて問題文に接近 -->
+        <div id="choice-container" style="display: none; flex-wrap: wrap; gap: 10px; width: 100%; max-width: 500px; position: absolute; top: 60%; left: 50%; transform: translate(-50%, 40px); z-index: 100; justify-content: center;">            <button class="choice-btn" onclick="selectChoice(0)" style="width: calc(50% - 10px); flex: 0 0 auto; box-sizing: border-box;"></button>
+            <button class="choice-btn" onclick="selectChoice(1)" style="width: calc(50% - 10px); flex: 0 0 auto; box-sizing: border-box;"></button>
+            <button class="choice-btn" onclick="selectChoice(2)" style="width: calc(50% - 10px); flex: 0 0 auto; box-sizing: border-box;"></button>
+            <button class="choice-btn" onclick="selectChoice(3)" style="width: calc(50% - 10px); flex: 0 0 auto; box-sizing: border-box;"></button>
+        </div>
+        <!-- ここまで -->
         <div id="quiz-timer-display">15</div>
         <div id="quiz-start-overlay"></div>
         <div id="fastest-ranking">
@@ -468,15 +541,30 @@ window.onYouTubeIframeAPIReady = () => {
                 }
             });
         }
-        // 全画面状態の変化を監視してDBに報告
+        // --- 修正箇所：全画面状態の変化を監視してDB報告 ＋ ボタン文字も連動させる ---
         document.addEventListener('fullscreenchange', () => {
             const isFull = !!document.fullscreenElement;
+            // 1. DBに全画面状態を報告（既存のまま）
             update(ref(db, `game/users/${myId}`), { isFullscreen: isFull });
+            
+            // 2. ESCキー解除にも対応できるよう、ボタンの文字を現在の状態に強制同期
+            const fsBtn = document.getElementById('fullscreen-btn');
+            if (fsBtn) {
+                fsBtn.textContent = isFull ? "解除" : "全画面";
+            }
         });
+
         // Safari用
         document.addEventListener('webkitfullscreenchange', () => {
             const isFull = !!document.webkitFullscreenElement;
+            // 1. DBに全画面状態を報告（既存のまま）
             update(ref(db, `game/users/${myId}`), { isFullscreen: isFull });
+            
+            // 2. ボタンの文字を同期
+            const fsBtn = document.getElementById('fullscreen-btn');
+            if (fsBtn) {
+                fsBtn.textContent = isFull ? "解除" : "全画面";
+            }
         });
 
         onValue(ref(db, 'game/settings'), (snap) => {
@@ -512,6 +600,59 @@ window.onYouTubeIframeAPIReady = () => {
 
             quizInfo = data; // ここで新しいデータに更新します
             window.is1stPointAwarded = false; // 全体の1位フラグもリセット
+
+            // --- 選択肢モードのUI制御ここから追加 ---
+            const choiceArea = document.getElementById('choice-container');
+            const answerInput = document.getElementById('answer-input');
+            const sendBtn = document.getElementById('btn-send-answer');
+
+            if (quizInfo.isChoiceMode) {
+                // 選択肢モード中の表示
+                if (choiceArea) choiceArea.style.display = 'none';
+                if (answerInput) {
+                    answerInput.disabled = true; 
+                    answerInput.placeholder = "選択肢から選んでください";
+                }
+                if (sendBtn) sendBtn.disabled = true;
+
+                // ボタンに選択肢テキストをセットし、状態をリセット
+                const btns = document.querySelectorAll('.choice-btn');
+                if (quizInfo.choices && quizInfo.choices.length > 0) {
+                    quizInfo.choices.forEach((text, i) => {
+                        if (btns[i]) {
+                            btns[i].innerText = text;
+                            btns[i].disabled = false; // 回答権を復活（新ラウンドのため）
+                            btns[i].style.background = "rgba(0, 0, 0, 0.8)"; // 背景を初期化
+                            btns[i].style.borderColor = "var(--primary-color)"; // 枠線を初期化
+                        }
+                    });
+                }
+
+                // --- ここを追加：カウントダウン終了（READY?が消える）を待って表示 ---
+                // 3000ms（3秒）など、あなたのカウントダウン秒数に合わせて数値を調整してください
+                setTimeout(() => {
+                    if (quizInfo.isChoiceMode && choiceArea) {
+                        choiceArea.style.display = 'flex';
+                    }
+                }, 5500); 
+
+            } else {
+                // 通常モード（イントロ・クイズ・モザイク）
+                if (choiceArea) choiceArea.style.display = 'none';
+                if (answerInput) {
+                    answerInput.disabled = false;
+                    answerInput.placeholder = "答えを入力...";
+                }
+                if (sendBtn) sendBtn.disabled = false;
+
+    // ★追加：通常モードの時も、新しい曲が始まったらパスボタンを復活させる
+    const passBtn = document.getElementById('btn-pass') || document.getElementById('pass-btn');
+    if (passBtn) {
+        passBtn.disabled = false; // ボタンを復活させる
+        passBtn.style.opacity = "1.0"; // 薄暗さを元に戻す
+    }
+}
+            // --- 選択肢モードのUI制御ここまで ---
             
             const slider = document.getElementById('volume-slider');
             updateVolumeUI(slider.value);
@@ -675,7 +816,6 @@ window.onYouTubeIframeAPIReady = () => {
                     }, 1000);
                 }
 
-// --- 修正箇所ここから ---
             } else if(sig.type === 'reveal') {
                 isRevealedGlobal = true; 
                 if (window.quizTimer) clearTimeout(window.quizTimer);
@@ -683,23 +823,50 @@ window.onYouTubeIframeAPIReady = () => {
                 if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
                 document.getElementById('quiz-title-mask').style.display = "none";
                 document.getElementById('mosaic-overlay').style.display = "none";
+
+                // 1. まず最初に開示フラグを true にする（これで prevScore の隠蔽制限が解除されます）
+                isRevealedGlobal = true;
                 
-                // 参加者側の通知エリアに「曲名 / アーティスト名」を表示
-                showNotice(`${quizInfo.title} / ${quizInfo.artist}`, "var(--success-green)");
+                // --- 選択肢モード時は正解者だけに正解通知を出す ---
+                if (quizInfo.isChoiceMode) {
+                    if (hasPointedTitle) {
+                        showNotice(`正解！ ${quizInfo.title} / ${quizInfo.artist}`, "var(--success-green)");
+                    }
+                } else {
+                    showNotice(`${quizInfo.title} / ${quizInfo.artist}`, "var(--success-green)");
+                }
 
                 player.unMute(); player.playVideo();
                 document.getElementById('video-cover').style.display = "none";
                 document.getElementById('quiz-timer-display').style.display = "none";
-// --- 修正箇所ここまで ---
+
+                // --- 【根本解決】データ通信は行わず、手元にある最新スコアでHTMLを一瞬で再描画する ---
+                // 最初に見せていただいた「users.forEach...」の入ったリスト描画関数をここで直接実行します。
+                // これにより、隠されていた u.score が一瞬で全員の画面に解禁されて表示されます。
+                if (typeof renderUserList === 'function') {
+                    renderUserList();
+                } else if (typeof updateUserList === 'function') {
+                    updateUserList();
+                } else if (typeof renderUsers === 'function') {
+                    renderUsers();
+                }
+                const answerInput = document.getElementById('answer-input');
+                const sendBtn = document.getElementById('btn-send-answer');
+
+                if (answerInput) {
+                    answerInput.disabled = false;
+                    answerInput.placeholder = "答えを入力...";
+                }
+                if (sendBtn) {
+                    sendBtn.disabled = false;
+                }
                 const playerEl = document.getElementById('player');
                 if (playerEl) playerEl.style.opacity = "1";
                 if (quizInfo.isQuizMode) document.getElementById('quiz-question-display').style.display = "block";
-            // --- 修正箇所ここから ---
             } else if(sig.type === 'pause_video') {
                 if (player && player.pauseVideo) {
                     player.pauseVideo();
                 }
-            // --- 修正箇所ここまで ---
             } else if(sig.type === 'ranking_toggle') {
                 const panel = document.getElementById('fastest-ranking');
                 if(sig.value) { renderRanking(); panel.style.display = "block"; } else { panel.style.display = "none"; }
@@ -776,11 +943,22 @@ window.onYouTubeIframeAPIReady = () => {
                 }
 
                 // 2. 各種ステータス（記号・マーク）の準備
-                const isTop = (displayScore > 0 && displayScore === maxScore);
+                let currentMax = maxScore;
+                if (!isAdmin && !isRevealedGlobal) {
+                    // 安全対策：usersが配列でもオブジェクトでもエラーを出さずに最高得点を計算します
+                    const userArray = Array.isArray(users) ? users : Object.values(users || {});
+                    if (userArray.length > 0) {
+                        currentMax = Math.max(...userArray.map(user => user.isAdmin ? 0 : (user.prevScore !== undefined ? user.prevScore : (user.score || 0))));
+                    }
+                }
+
+                const isTop = (displayScore > 0 && displayScore === currentMax);
                 const crown = isTop ? '<span class="crown">👑</span>' : '';
-                const correctMark = ((isAdmin || isRevealedGlobal) && u.hasCorrectedTitle) ? '<span class="correct-mark">正解</span>' : '';
                 
-                // 全画面判定（ここで一括管理）
+                // 消えてしまっていた正解マークの行もここに復活させて安全に合流させます
+                const correctMark = ((isAdmin || isRevealedGlobal) && u.hasCorrectedTitle) ? '<span class="correct-mark">正解</span>' : '';
+
+                // 全画面判定（ここから下は既存のコードのままです）
                 const fullStatus = u.isFullscreen 
                     ? '<span style="color:green; font-size:10px; margin-left:5px; font-weight:bold;">[全画面]</span>' 
                     : '<span style="color:#aaa; font-size:10px; margin-left:5px;">[通常]</span>';
@@ -821,6 +999,14 @@ window.onYouTubeIframeAPIReady = () => {
 
     function normalize(t) { return t ? t.normalize("NFKC").replace(/[！!？?。．、，\s]/g, "").replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60)).toLowerCase() : ""; }
     window.sendPassSignal = () => {
+        // ★新設：クリックされた瞬間にパスボタンを無効化（連打を物理的にガード）
+        // ※もしボタンのHTML上のidが違っていた場合を想定し、一般的なid名で取得を試みます
+        const passBtn = document.getElementById('btn-pass') || document.getElementById('pass-btn');
+        if (passBtn) {
+            passBtn.disabled = true;
+            passBtn.style.opacity = "0.5"; // ボタンを半透明にして「押せない状態」を視覚的に伝える
+        }
+
         pushChat("（パス）", false, false, false, false);
         if (myId) {
             update(ref(db, `game/users/${myId}`), { isPass: true })
@@ -829,128 +1015,150 @@ window.onYouTubeIframeAPIReady = () => {
                 });
         }
     };
+    // --- 1. 得点計算とチャット送信の共通ロジック (これを独立させる) ---
+    const processScore = (text, isTitle, isArtist) => {
+        if(isAdmin || isRevealedGlobal) { 
+            pushChat(text, false, false); 
+            return; 
+        }
+
+        const now = Date.now();
+        const startTime = quizInfo.startTime || 0;
+        
+        // カウントダウン中などの判定
+        if (startTime === 0 || isRevealedGlobal) {
+            pushChat(text, isTitle, isArtist);
+            return;
+        }
+
+        const sec = quizInfo.currentSeconds || 0;
+        let titlePoints = 0; let artistPoints = 0;
+
+        // 得点計算
+        if (quizInfo.isQuizMode) {
+            const elapsed = (now - startTime) / 1000;
+            if (elapsed > 15) titlePoints = 0; else titlePoints = Math.max(1, Math.ceil(15 - elapsed));
+        } else {
+            if (sec === 1 || sec === 1.5) { titlePoints = 10; artistPoints = 5; }
+            else if (sec === 2 || sec === 2.5) { titlePoints = 9; artistPoints = 4; }
+            else if (sec === 3) { titlePoints = 8; artistPoints = 3; }
+            else if (sec === 5) { titlePoints = 6; artistPoints = 2; }
+            else if (sec === 10) { titlePoints = 5; artistPoints = 1; }
+        }
+
+        // 正解時の処理
+        if (isTitle && !hasPointedTitle) {
+            let addedPoints = Math.max(0, titlePoints - roundPointsEarned);
+            if (window.is1stPointAwarded) addedPoints = Math.min(addedPoints, 15);
+
+            if (addedPoints > 0) {
+                // この問題での合計点を計算
+                const totalInThisRound = roundPointsEarned + addedPoints;
+
+                update(ref(db, `game/users/${myId}`), { 
+                    score: increment(addedPoints), 
+                    hasCorrectedTitle: true,
+                    hasPointedTitle: true 
+                });
+                // 選択肢モードなら中央のデカ通知を隠す
+                if (!quizInfo.isChoiceMode) {
+                    showCenterNotify(`正解！(+${addedPoints}pt[合計${totalInThisRound}pt])`, "var(--success-green)");
+                }
+                // --- 修正箇所：選択肢クリックからの正解時は、左下非表示・モザイク維持・タイトル消去防止 ---
+                if (!quizInfo.isFromChoiceClick) {
+                    showNotice(`正解！ ${text} (+${addedPoints}pt[合計${totalInThisRound}pt])`, "var(--success-green)");
+                    
+                    if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
+                    document.getElementById('quiz-title-mask').style.display = "none";
+                    document.getElementById('mosaic-overlay').style.display = "none";
+                }
+                // ---------------------------------------------------------------------------------
+                
+                roundPointsEarned += addedPoints;
+            }
+        } else if (!quizInfo.isQuizMode && isArtist && !hasPointedArtist && !hasPointedTitle) {
+            const addedPoints = Math.max(0, artistPoints - roundPointsEarned);
+            if (addedPoints > 0) {
+                update(ref(db, `game/users/${myId}`), { score: increment(addedPoints) });
+                showCenterNotify(`アーティスト正解！(+${addedPoints}pt)`, "var(--gold)");
+                showNotice(`アーティスト正解！ ${text} (+${addedPoints}pt)`, "var(--gold)");
+                roundPointsEarned += addedPoints;
+            }
+            hasPointedArtist = true;
+        }
+
+        pushChat(text, isTitle, isArtist);
+    };
+
+    // --- 2. キーボード入力用の送信処理 ---
     const sendAnswer = () => {
         const input = document.getElementById('answer-input'), text = input.value.trim();
         if(!text) return;
-        if(isAdmin) { pushChat(text, false, false); input.value = ""; return; }
-        if(isRevealedGlobal) { pushChat(text, false, false); input.value = ""; return; }
+
         const clean = (str) => {
             if (!str) return "";
-            return str
-                .toLowerCase()
-                .replace(/[ぁ-ん]/g, (s) => String.fromCharCode(s.charCodeAt(0) + 0x60)) // ひらがなをカタカナに変換
-                .replace(/ヴ/g, 'ブ') // ヴをブに変換
-                .replace(/[\s　・．。、，,.\-]/g, ''); // 空白、中黒、ドット、記号をすべて削除
+            return str.toLowerCase()
+                .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
+                .replace(/[ぁ-ん]/g, (s) => String.fromCharCode(s.charCodeAt(0) + 0x60))
+                .replace(/ヴ/g, 'ブ')
+                .replace(/[\s　・．。、，,.\-]/g, '');
         };
-        // --- 修正箇所：類似度計算関数の追加 ---
-        const getSimilarity = (s1, s2) => {
-            const len1 = s1.length, len2 = s2.length;
-            if (len1 === 0 || len2 === 0) return 0;
-            const d = Array.from({ length: len1 + 1 }, (_, i) => Array.from({ length: len2 + 1 }, (_, j) => i === 0 ? j : j === 0 ? i : 0));
-            for (let i = 1; i <= len1; i++) {
-                for (let j = 1; j <= len2; j++) {
-                    const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
-                    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
-                }
-            }
-            return 1 - d[len1][len2] / Math.max(len1, len2);
-        };
-        // ------------------------------------
 
         const normIn = clean(text);
         const titleCandidates = quizInfo.title.split('.').map(c => clean(c));
         const artistCandidates = quizInfo.artist.split('.').map(c => clean(c));
-
         const isTitle = titleCandidates.some(c => c !== "" && c === normIn);
         const isArtist = artistCandidates.some(c => c !== "" && c === normIn);
-        // --- 修正箇所：おしい！判定（伏せ字 ＆ 秘匿フラグ送信） ---
+
+        // おしい判定
         if (!isTitle && !isArtist) {
-            const isNear = [...titleCandidates, ...artistCandidates].some(c => c !== "" && getSimilarity(c, normIn) >= 0.7);
+            const getSim = (s1, s2) => {
+                const l1 = s1.length, l2 = s2.length;
+                if (l1 === 0 || l2 === 0) return 0;
+                const d = Array.from({ length: l1 + 1 }, (_, i) => Array.from({ length: l2 + 1 }, (_, j) => i === 0 ? j : j === 0 ? i : 0));
+                for (let i = 1; i <= l1; i++) {
+                    for (let j = 1; j <= l2; j++) {
+                        const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
+                        d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+                    }
+                }
+                return 1 - d[l1][l2] / Math.max(l1, l2);
+            };
+            const isNear = [...titleCandidates, ...artistCandidates].some(c => c !== "" && getSim(c, normIn) >= 0.7);
             if (isNear) {
                 showNotice("おしい！", "#ffa500");
-                
-                // 【変更点】伏せ字テキスト(masked)はここでは作らず、
-                // 第4引数に true (isNearフラグ) だけを渡して送信します。
                 pushChat(text, false, false, true); 
-                
-                input.value = "";
-                return; // ここで終了
+                input.value = ""; return;
             }
         }
-        // -------------------------------------------------------
-        if (isTitle || isArtist) {
-            // --- 修正箇所ここから ---
-            const now = Date.now();
-            const startTime = quizInfo.startTime || 0;
-            
-            // 最初のカウントダウン中（startTimeが0）は判定をスキップしてチャット送信のみ行う
-            if (startTime === 0) {
-                pushChat(text, isTitle, isArtist);
-                input.value = "";
-                return;
-            }
-            // --- 修正箇所ここまで ---
-            const sec = quizInfo.currentSeconds || 0;
-            let titlePoints = 0; let artistPoints = 0;
-            if (quizInfo.isQuizMode) {
-                const now = Date.now(); const startTime = quizInfo.startTime || 0; const elapsed = (now - startTime) / 1000;
-                if (elapsed > 15) titlePoints = 0; else titlePoints = Math.max(1, Math.ceil(15 - elapsed));
-            } else {
-                if (sec === 1 || sec === 1.5) { titlePoints = 10; artistPoints = 5; }
-                else if (sec === 2 || sec === 2.5) { titlePoints = 9; artistPoints = 4; }
-                else if (sec === 3) { titlePoints = 8; artistPoints = 3; }
-                else if (sec === 5) { titlePoints = 6; artistPoints = 2; }
-                else if (sec === 10) { titlePoints = 5; artistPoints = 1; }
-            }
-            if (isTitle && !hasPointedTitle) {
-                let addedPoints = Math.max(0, titlePoints - roundPointsEarned);
 
-                // 1位ボーナス重複バグ防止：
-                // すでに1位が出ているなら、点数が15点を超えないように制限します。
-                // これにより、5点の時は5点のまま、80点の時だけ15点（または10点）に抑えられます。
-                if (window.is1stPointAwarded) {
-                    addedPoints = Math.min(addedPoints, 15);
-                }
-
-                if (addedPoints > 0) {
-                    update(ref(db, `game/users/${myId}`), { 
-                        score: increment(addedPoints), 
-                        hasCorrectedTitle: true,
-                        hasPointedTitle: true 
-                    });
-                    showCenterNotify(`正解！(+${addedPoints}pt / 合計${roundPointsEarned + addedPoints}pt)`, "var(--success-green)");
-                    showNotice(`正解！ ${text} (合計${roundPointsEarned + addedPoints}pt)`, "var(--success-green)");
-                    if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
-                    document.getElementById('quiz-title-mask').style.display = "none";
-                    document.getElementById('mosaic-overlay').style.display = "none";
-                    roundPointsEarned += addedPoints;
-                } else if (quizInfo.isQuizMode && titlePoints === 0) { 
-                showCenterNotify(`正解！（時間切れ）`, "#888");
-                showNotice(`正解！ ${text} （時間切れ）`, "#888"); 
-                if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
-                document.getElementById('quiz-title-mask').style.display = "none";
-                document.getElementById('mosaic-overlay').style.display = "none";
-                }
-            } else if (!quizInfo.isQuizMode && isArtist && !hasPointedArtist && !hasPointedTitle) {
-                const addedPoints = Math.max(0, artistPoints - roundPointsEarned);
-                if (addedPoints > 0) {
-                    update(ref(db, `game/users/${myId}`), { score: increment(addedPoints) });
-                    showCenterNotify(`アーティスト正解！(+${addedPoints}pt)`, "var(--gold)");
-                    showNotice(`アーティスト正解！ ${text} (+${addedPoints}pt)`, "var(--gold)");
-                    roundPointsEarned += addedPoints;
-                }
-                hasPointedArtist = true;
-            }
-
-            // ★ここに追加：正解した時はここでチャットを送って「終了(return)」させる
-            pushChat(text, isTitle, isArtist);
-            input.value = "";
-            return; 
-        } // ←これが if (isTitle || isArtist) の閉じカッコです
-
-        // --- ここから下は「正解」でも「おしい」でもなかった時の処理 ---
-        pushChat(text, isTitle, isArtist);
+        processScore(text, isTitle, isArtist);
         input.value = "";
+    };
+
+    // --- 3. 選択肢ボタン用の送信処理 ---
+    window.selectChoice = (idx) => {
+        if (isRevealedGlobal) return;
+        const btns = document.querySelectorAll('.choice-btn');
+        if (!btns[idx]) return;
+
+        const selectedText = btns[idx].innerText;
+        btns.forEach(b => b.disabled = true); // 1回切り
+        btns[idx].style.background = "var(--accent-blue, #3498db)";
+        btns[idx].style.borderColor = "#fff";
+
+        const clean = (str) => str ? str.toLowerCase().replace(/[\s　]/g, '') : "";
+        const normIn = clean(selectedText);
+        const titleCandidates = quizInfo.title.split('.').map(c => clean(c));
+        const isTitle = titleCandidates.some(c => c !== "" && c === normIn);
+
+        // --- 修正箇所：選択肢モードからの判定であることを一時的なプロパティで付与 ---
+        quizInfo.isFromChoiceClick = true;
+
+        processScore(selectedText, isTitle, false); 
+
+        // 処理が終わったら目印を解除
+        quizInfo.isFromChoiceClick = false;
     };
 
     const pushChat = (text, isTitle, isArtist, isNear = false, isPass = false) => {
@@ -973,38 +1181,35 @@ window.onYouTubeIframeAPIReady = () => {
         // パス信号の場合、主催者以外には何も表示せず終了する
         if (m.isPass && !isAdmin) return;
 
-        // 表示する文字を決める変数（最初は生文字を入れておく）
+        // 表示する文字を決める変数
         let displayText = m.text;
 
         // --- おしい！時の出し分け処理 ---
         if (m.isNear) {
             if (isAdmin || m.userId === myId) {
-                // 主催者または本人の画面：生文字（おしい！）
                 displayText = `${m.text}（おしい！）`;
             } else {
-                // 他の参加者の画面：伏せ字（おしい！）
                 const masked = "＊".repeat(m.text.length);
                 displayText = `${masked}（おしい！）`;
             }
         }
 
-        // --- 表示制限（カンニング防止） ---
+        // --- 表示制限（カンニング防止 ＆ 選択肢モード対応） ---
         if (!isAdmin) {
-            // 正解（Title/Artist）は、書いた本人以外には「流さない」
-            if ((m.isTitle || m.isArtist) && m.userId !== myId) {
+            // 通常モード（入力形式）の正解は、本人以外には流さない
+            // 選択肢モード(isChoiceMode)の時は、回答権が1回なので全員に流してOK
+            if (!quizInfo.isChoiceMode && (m.isTitle || m.isArtist) && m.userId !== myId) {
                 return;
             }
-            // 「おしい！」は上で伏せ字にしたので、全員に流してOK
         }
 
         // 実際に画面に表示する処理
         const div = document.createElement('div'); 
         div.className = `danmaku`; 
         
-        // 主催者の画面でパス信号を受け取った場合のみ、名前を[パス]付きにする
         const userNameDisplay = (isAdmin && m.isPass) ? `${m.user}[パス]` : m.user;
 
-        div.innerText = `${userNameDisplay}: ${displayText}`; // 決まった文字を入れる
+        div.innerText = `${userNameDisplay}: ${displayText}`;
         div.style.top = (Math.random() * 70 + 10) + "%"; 
         document.getElementById('screen-chat-overlay').appendChild(div);
         setTimeout(() => div.remove(), 4000);
@@ -1012,12 +1217,32 @@ window.onYouTubeIframeAPIReady = () => {
 
     const sendSignal = (type, value) => set(ref(db, 'game/signal'), { type, value, time: Date.now() });
 
-    const loadNextFromReserve = async () => {
+    const loadNextFromReserve = async (isRandom = false) => {
+        // --- 修正箇所：ボタンから明示的に true が渡されない限り、絶対に勝手にランダムにならないようガード ---
+        const checkRandom = (isRandom === true) ? true : false;
+        
         const area = document.getElementById('reserve-area'), lines = area.value.trim().split('\n');
         if(!lines[0]) return alert("予約リストが空です");
+        const choiceArea = document.getElementById('choice-container');
+        if (choiceArea) choiceArea.style.display = 'none';
         let nextRound = quizInfo.round || 0;
         if (!window.isCurrentVideoError || nextRound === 0) nextRound += 1;
-        const currentLine = lines.shift(); area.value = lines.join('\n');
+        
+        // --- 修正箇所：checkRandomがtrueの時だけリスト内からランダムに1行を抽出する ---
+        let currentLine = "";
+        if (checkRandom === true) {
+            // ランダムに選ぶ行の番号（インデックス）を決める
+            const randomIndex = Math.floor(Math.random() * lines.length);
+            // その行をリストから抜き出す
+            currentLine = lines.splice(randomIndex, 1)[0];
+            // 抜き取った後のリストでテキストエリアを更新する
+            area.value = lines.join('\n');
+        } else {
+            // 既存の挙動：上から順番に1行取得してテキストエリアを更新する
+            currentLine = lines.shift(); 
+            area.value = lines.join('\n');
+        }
+        // ---------------------------------------------------------------------------------
         const parts = currentLine.split('*');
         const urlStr = parts[0]; let vid = ""; let startTime = 0;
         const idMatch = urlStr.match(/(?:v=|v\/|embed\/|shorts\/|youtu\.be\/|\/be\/|watch\?v=|&v=|^)([a-zA-Z0-9_-]{11})/);
@@ -1027,7 +1252,6 @@ window.onYouTubeIframeAPIReady = () => {
         if(!vid || vid.length !== 11) return alert("有効なURL/IDではありません");
         let volumeRatio = 1.0; const lastPart = parts[parts.length - 1];
         if (!isNaN(lastPart) && (lastPart.includes('.') || !isNaN(parseFloat(lastPart)))) volumeRatio = parseFloat(parts.pop());
-        // --- 修正箇所：パスと二重取り防止フラグをリセット ---
         const usersSnap = await get(ref(db, 'game/users'));
         if (usersSnap.exists()) {
             const updates = {};
@@ -1038,10 +1262,44 @@ window.onYouTubeIframeAPIReady = () => {
             });
             update(ref(db), updates);
         }
-        let isQuiz = false; let isMosaic = false; let qText = ""; let aText = parts[1] || ""; let artText = parts[2] || "";
-        if (parts[1] && parts[1].startsWith("!!")) { isQuiz = true; qText = parts[1].substring(2); aText = parts[2] || ""; artText = ""; }
-        else if (parts[1] && parts[1].startsWith('""')) { isQuiz = true; isMosaic = true; qText = parts[1].substring(2); aText = parts[2] || ""; artText = ""; }
-// --- 修正箇所ここから ---
+// --- 選択肢・クイズ解析ロジック開始 ---
+        let isQuiz = false; 
+        let isMosaic = false; 
+        let isChoice = false; 
+        let qText = ""; 
+        let aText = parts[1] || ""; 
+        let artText = parts[2] || "";
+        let choices = [];
+
+        const p1 = parts[1] || "";
+
+        if (p1.startsWith("$!")) {
+            // 選択肢クイズモード
+            isChoice = true; isQuiz = true; isMosaic = false;
+            qText = p1.substring(2) + "（1度だけ回答可能）";
+            aText = parts[2] || ""; 
+            choices = [parts[2], parts[3], parts[4], parts[5]]; 
+        } 
+        else if (p1.startsWith('$"')) {
+            // 選択肢モザイクモード
+            isChoice = true; isQuiz = true; isMosaic = true;
+            qText = p1.substring(2) + "（1度だけ回答可能）";
+            aText = parts[2] || "";
+            choices = [parts[2], parts[3], parts[4], parts[5]];
+        }
+        else if (p1.startsWith("!!")) { 
+            // 通常クイズモード
+            isQuiz = true; qText = p1.substring(2); aText = parts[2] || ""; artText = "";
+        } 
+        else if (p1.startsWith('""')) { 
+            // 通常モザイクモード
+            isQuiz = true; isMosaic = true; qText = p1.substring(2); aText = parts[2] || ""; artText = "";
+        }
+        // $や!が付かない場合は通常のイントロモードとして動作（aText, artTextは定義済み）
+
+        // 選択肢があればランダムに並び替える
+        const shuffledChoices = isChoice ? choices.sort(() => Math.random() - 0.5) : [];
+        // --- 選択肢・クイズ解析ロジック終了 ---
         const userSnap = await get(ref(db, 'game/users'));
         if(userSnap.exists()){
             const updates = {};
@@ -1055,26 +1313,51 @@ window.onYouTubeIframeAPIReady = () => {
             });
             await update(ref(db), updates);
         }
-        // --- 修正箇所ここから ---
+        
         await set(ref(db, 'game/signal_time'), 0);
         const currentSettingsSnap = await get(ref(db, 'game/settings'));
         const keepClosed = currentSettingsSnap.val()?.isClosed || false;
-        await set(ref(db, 'game/settings'), { videoId: vid, title: aText, artist: artText, round: nextRound, isQuizMode: isQuiz, isMosaicMode: isMosaic, questionText: qText, startTimeOffset: startTime, volumeRatio: volumeRatio, isClosed: keepClosed });
+        // --- 修正箇所：Firebaseへの設定送信（選択肢モード対応） ---
+        await set(ref(db, 'game/settings'), { 
+            videoId: vid, 
+            title: aText, 
+            artist: artText, 
+            round: nextRound, 
+            isQuizMode: isQuiz, 
+            isMosaicMode: isMosaic, 
+            isChoiceMode: isChoice,     // ★追加
+            choices: shuffledChoices,   // ★追加
+            questionText: qText, 
+            startTimeOffset: startTime, 
+            volumeRatio: volumeRatio, 
+            isClosed: keepClosed 
+        });
         // --- 修正箇所ここまで ---
         await sendSignal('show_video', isQuiz && !isQuiz);
         if (isQuiz) setTimeout(() => triggerPlayWithCountdown(15), 1500);
     };
+
+    const loadRandomFromReserve = async () => {
+    // 1. 本物の関数に直接「true（ランダムに処理して！）」とだけ伝えて呼び出す
+    await loadNextFromReserve(true);
+};
+window.loadRandomFromReserve = loadRandomFromReserve; // 👈 この1行を足すだけ！
 
     const resetRoomData = async () => {
         if(!confirm("リセット？")) return;
         try {
             await remove(ref(db, 'game/chats'));
             await set(ref(db, 'game/signal_time'), 0);
-            // --- 修正箇所ここから ---
             const settingsSnap = await get(ref(db, 'game/settings'));
             const currentIsClosed = settingsSnap.val()?.isClosed || false;
-            await set(ref(db, 'game/settings'), { videoId: 'dQw4w9WgXcQ', title: '', artist: '', round: 0, isQuizMode: false, isMosaicMode: false, questionText: "", startTimeOffset: 0, volumeRatio: 1.0, isClosed: currentIsClosed });
-            // --- 修正箇所ここまで ---
+            await set(ref(db, 'game/settings'), { 
+                videoId: 'dQw4w9WgXcQ', title: '', artist: '', round: 0, 
+                isQuizMode: false, isMosaicMode: false, 
+                isChoiceMode: false, // ★追加
+                choices: [],         // ★追加
+                questionText: "", startTimeOffset: 0, volumeRatio: 1.0, 
+                isClosed: currentIsClosed 
+            });
             const snap = await get(ref(db, 'game/users'));
             if(snap.exists()) {
                 const usersData = snap.val();
@@ -1268,24 +1551,79 @@ window.onYouTubeIframeAPIReady = () => {
         const normalInputs = document.getElementById('mq-normal-inputs');
         const quizInputs = document.getElementById('mq-quiz-inputs');
         const artistGroup = document.getElementById('mq-artist-group');
+        // ★新設：選択肢モード用の入力欄の塊を取得
+        const choiceInputs = document.getElementById('mq-choice-inputs');
+
         document.getElementById('btn-open-q-modal').onclick = () => { qModal.style.display = 'flex'; };
         document.getElementById('btn-mq-close').onclick = () => { qModal.style.display = 'none'; };
+        
         qTypeSelect.onchange = () => {
             const val = qTypeSelect.value;
-            if (val === 'normal') { normalInputs.style.display = 'block'; quizInputs.style.display = 'none'; artistGroup.style.display = 'block'; } 
-            else { normalInputs.style.display = 'block'; quizInputs.style.display = 'block'; artistGroup.style.display = 'none'; }
+            if (val === 'normal') { 
+                normalInputs.style.display = 'block'; 
+                quizInputs.style.display = 'none'; 
+                artistGroup.style.display = 'block'; 
+                if (choiceInputs) choiceInputs.style.display = 'none'; // ★隠す
+            } 
+            else if (val === 'quiz' || val === 'mosaic') {
+                normalInputs.style.display = 'block'; 
+                quizInputs.style.display = 'block'; 
+                artistGroup.style.display = 'none'; 
+                if (choiceInputs) choiceInputs.style.display = 'none'; // ★隠す
+            }
+            else if (val === 'choice_quiz' || val === 'choice_mosaic') {
+                // ★選択肢モードの時は、問題文も選択肢も全部表示、アーティスト名だけ隠す
+                normalInputs.style.display = 'block';
+                quizInputs.style.display = 'block';
+                artistGroup.style.display = 'none';
+                if (choiceInputs) choiceInputs.style.display = 'block'; // ★表示する！
+            }
         };
+
         document.getElementById('btn-mq-add').onclick = () => {
-            const type = qTypeSelect.value, url = document.getElementById('mq-url').value.trim(), title = document.getElementById('mq-title').value.trim(), artist = document.getElementById('mq-artist').value.trim(), question = document.getElementById('mq-question').value.trim(), vol = document.getElementById('mq-vol').value.trim() || "1.0";
+            const type = qTypeSelect.value, 
+                  url = document.getElementById('mq-url').value.trim(), 
+                  title = document.getElementById('mq-title').value.trim(), 
+                  artist = document.getElementById('mq-artist').value.trim(), 
+                  question = document.getElementById('mq-question').value.trim(), 
+                  vol = document.getElementById('mq-vol').value.trim() || "1.0";
+            
+            // ★新設：4つの選択肢の入力値を取得
+            const c1 = document.getElementById('mq-choice1')?.value.trim() || "",
+                  c2 = document.getElementById('mq-choice2')?.value.trim() || "",
+                  c3 = document.getElementById('mq-choice3')?.value.trim() || "",
+                  c4 = document.getElementById('mq-choice4')?.value.trim() || "";
+
             if (!url || !title) return alert("URLと答えは必須です");
+            
+            // 選択肢モードの時は4つの選択肢が全て埋まっているかチェック
+            if ((type === 'choice_quiz' || type === 'choice_mosaic') && (!c1 || !c2 || !c3 || !c4)) {
+                return alert("選択肢1〜4をすべて入力してください。");
+            }
+
             let line = url + "*";
             if (type === 'quiz') line += `!!${question}*${title}`;
             else if (type === 'mosaic') line += `""${question}*${title}`;
+            // ★新設：選択肢クイズなら $!、選択肢モザイクなら $" の形式に組み立てる
+            else if (type === 'choice_quiz') line += `$!${question}*${c1}*${c2}*${c3}*${c4}`;
+            else if (type === 'choice_mosaic') line += `$"${question}*${c1}*${c2}*${c3}*${c4}`;
             else line += `${title}*${artist}`;
+            
             line += `*${vol}`;
+            
             const area = document.getElementById('reserve-area');
             area.value += (area.value ? "\n" : "") + line;
-            document.getElementById('mq-url').value = ""; document.getElementById('mq-title').value = ""; document.getElementById('mq-artist').value = ""; document.getElementById('mq-question').value = "";
+            
+            // 入力欄をすべて綺麗にリセット
+            document.getElementById('mq-url').value = ""; 
+            document.getElementById('mq-title').value = ""; 
+            document.getElementById('mq-artist').value = ""; 
+            document.getElementById('mq-question').value = "";
+            if(document.getElementById('mq-choice1')) document.getElementById('mq-choice1').value = "";
+            if(document.getElementById('mq-choice2')) document.getElementById('mq-choice2').value = "";
+            if(document.getElementById('mq-choice3')) document.getElementById('mq-choice3').value = "";
+            if(document.getElementById('mq-choice4')) document.getElementById('mq-choice4').value = "";
+            
             qModal.style.display = 'none';
         };
         // --- ここから追加：全画面状態の監視 ---
