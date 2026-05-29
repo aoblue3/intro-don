@@ -495,6 +495,10 @@ window.onYouTubeIframeAPIReady = () => {
                     if (typeof listenToSignals === 'function') listenToSignals();
                 },
                 'onStateChange': (e) => {
+                    // ★新設：このユーザーが画面でミュート中なら、動画の状態が変わった瞬間に音量を0に固定（次の曲での音漏れを完全にガード）
+                    if (typeof isMuted !== 'undefined' && isMuted && e.target && e.target.setVolume) {
+                        e.target.setVolume(0);
+                    }
                     if (typeof onPlayerStateChange === 'function') onPlayerStateChange(e);
                 },
                 'onError': (e) => {
@@ -511,14 +515,39 @@ window.onYouTubeIframeAPIReady = () => {
         const ratio = quizInfo.volumeRatio || 1.0;
         const finalVolume = Math.min(100, Math.floor(val * ratio));
         document.getElementById('volume-val').innerText = val;
+        
+        // ★修正：音量バーの値によってミュート状態フラグを厳密に切り替える
+        if (val > 0) {
+            if (player?.unMute) player.unMute();
+            isMuted = false; // 0より大きければミュート解除
+        } else {
+            if (player?.mute) player.mute();
+            isMuted = true;  // 0にされたら自動的にミュート状態（isMuted = true）にする
+        }
+        
         if(player?.setVolume) player.setVolume(finalVolume);
         document.getElementById('mute-btn').innerText = val == 0 ? "🔇" : "🔈";
     };
 
     const toggleMute = () => {
         const slider = document.getElementById('volume-slider');
-        if(!isMuted) { lastVolume = slider.value; isMuted = true; updateVolumeUI(0); slider.value = 0; } 
-        else { isMuted = false; updateVolumeUI(lastVolume > 0 ? lastVolume : 50); slider.value = (lastVolume > 0 ? lastVolume : 50); }
+        if(!isMuted) { 
+            lastVolume = slider.value; 
+            isMuted = true; 
+            updateVolumeUI(0); 
+            slider.value = 0; 
+            if(player && player.setVolume) player.setVolume(0); // ★手動ミュート時、物理的にも音量を0にして音漏れを完全に遮断
+        } 
+        else { 
+            isMuted = false; 
+            const restoreVol = lastVolume > 0 ? lastVolume : 50;
+            updateVolumeUI(restoreVol); 
+            slider.value = restoreVol; 
+            if(player && player.setVolume) {
+                const ratio = (typeof quizInfo !== 'undefined' && quizInfo.volumeRatio) || 1.0;
+                player.setVolume(Math.min(100, Math.floor(restoreVol * ratio))); // ★ミュート解除時、元の音量に復元
+            }
+        }
     };
 
     function listenToSignals() {
@@ -836,7 +865,23 @@ window.onYouTubeIframeAPIReady = () => {
                     showNotice(`${quizInfo.title} / ${quizInfo.artist}`, "var(--success-green)");
                 }
 
-                player.unMute(); player.playVideo();
+                // ★修正：手動ミュート中のユーザーはミュートと音量0を維持し、それ以外のユーザーのみ音量を100にして再生します
+                if (typeof isMuted !== 'undefined' && isMuted) {
+                    if (player && player.mute) player.mute();
+                    if (player && player.setVolume) player.setVolume(0);
+                } else {
+                    player.unMute();
+                    // ★修正：強制的な音量100を廃止し、参加者自身が設定している音量スライダーの値をそのまま適用します（曲ごとの比率 ratio も安全に計算されます）
+                    const currentVolSlider = document.getElementById('volume-slider');
+                    if (currentVolSlider && typeof updateVolumeUI === 'function') {
+                        updateVolumeUI(currentVolSlider.value);
+                    } else if (player && player.setVolume) {
+                        // 万が一のためのセーフティガードとして、関数がない場合は既存の100を維持します
+                        player.setVolume(100);
+                    }
+                }
+                player.playVideo();
+
                 document.getElementById('video-cover').style.display = "none";
                 document.getElementById('quiz-timer-display').style.display = "none";
 
@@ -957,6 +1002,9 @@ window.onYouTubeIframeAPIReady = () => {
                 
                 // 消えてしまっていた正解マークの行もここに復活させて安全に合流させます
                 const correctMark = ((isAdmin || isRevealedGlobal) && u.hasCorrectedTitle) ? '<span class="correct-mark">正解</span>' : '';
+                
+                // ★修正：アーティスト正解マークの行を新設（「正解」マークの右隣に並びます。色などを変えたい場合はクラス名でCSS調整可能です）
+                const artistCorrectMark = ((isAdmin || isRevealedGlobal) && u.hasCorrectedArtist) ? '<span class="artist-correct-mark" style="color: #ffca28; font-size: 10px; margin-left: 5px; font-weight: bold; border: 1px solid #ffca28; padding: 1px 3px; border-radius: 3px;">アーティスト正解</span>' : '';
 
                 // 全画面判定（ここから下は既存のコードのままです）
                 const fullStatus = u.isFullscreen 
@@ -976,9 +1024,177 @@ window.onYouTubeIframeAPIReady = () => {
                 const banBtn = (isAdmin && !u.isAdmin) ? `<button onclick="banUser('${u.id}')" style="font-size:10px; margin-left:5px; padding:2px 4px; border-radius:4px; border:none; background:#ff4d4d; color:white; cursor:pointer;">BAN</button>` : '';
                 const scoreDisplay = u.isAdmin ? "" : `<b>${displayScore} pt</b>`;
 
-                // 5. HTMLを一気に組み立て
-                div.innerHTML = `<div>${crown}${u.name}${u.isAdmin ? " <small>(HOST)</small>":""}${statusText}${fullStatus}${correctMark}${banBtn}</div>${scoreDisplay}`;
-                
+                // ★修正2：確実にデータを反映させるため、Firebaseのデータベース（ref(db, 'game/chats')）の最新情報、またはローカルに保持されている正しいデータソースから名前が一致する正解・回答履歴を1件ずつ正確に照合・集計する処理を挟みます。
+                // 主催者側かつクリック時にその場で最新データを集計してアラート表示する関数を要素に直接仕込みます
+                if (isAdmin) {
+                    div.style.cursor = "pointer"; // クリックできることを分かりやすく
+                    div.onclick = async (e) => {
+                        // 誤動作防止（BANボタンなどのクリック時は発動しない）
+                        if (e.target.tagName === 'BUTTON') return;
+
+                        // 各データの集計用変数
+                        let roundDetails = {}; // ラウンドごとの集計（獲得pt、早解き順位）
+                        let total1stCount = 0; // 通算1位の回数
+                        let total2ndCount = 0; // 通算2位の回数
+                        let total3ndCount = 0; // 通算3位の回数
+                        
+                        // 照合用：現在のユーザーIDおよび名前の抽出
+                        const currentUserId = (typeof uid !== 'undefined' ? uid : (typeof key !== 'undefined' ? key : (u.id || "")));
+                        const cleanTargetName = u.name ? String(u.name).split('#')[0].trim().toLowerCase() : "";
+
+                        try {
+                            // 1. 最新のチャット履歴を取得
+                            const cSnap = await get(ref(db, 'game/chats'));
+                            
+                            if (cSnap.exists()) {
+                                cSnap.forEach(c => {
+                                    const d = c.val();
+                                    if (!d) return;
+                                    
+                                    const chatUserId = d.userId || "";
+                                    const chatUserName = d.user ? String(d.user).split('#')[0].trim().toLowerCase() : "";
+                                    
+                                    if (
+                                        (currentUserId && chatUserId && currentUserId === chatUserId) ||
+                                        (cleanTargetName && chatUserName && cleanTargetName === chatUserName)
+                                    ) {
+                                        const rNum = Number(d.round);
+                                        if (rNum) {
+                                            if (!roundDetails[rNum]) {
+                                                roundDetails[rNum] = { pts: 0, rank: "圏外" };
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+
+                            // 現在進行中の最新ラウンド（quizInfo.round）の獲得ポイントをリアルタイム算出
+                            const currentRoundNum = Number(quizInfo?.round || 0);
+                            if (currentRoundNum > 0) {
+                                if (!roundDetails[currentRoundNum]) {
+                                    roundDetails[currentRoundNum] = { pts: 0, rank: "圏外" };
+                                }
+                                const currentScore = Number(u.score || 0);
+                                const previousScore = Number(u.prevScore || 0);
+                                const diffPoints = Math.max(0, currentScore - previousScore);
+                                roundDetails[currentRoundNum].pts = diffPoints;
+                            }
+
+                            // 過去の各ラウンドの獲得ポイントの補正
+                            if (cSnap.exists()) {
+                                cSnap.forEach(c => {
+                                    const d = c.val();
+                                    if (d && d.round) {
+                                        const rNum = Number(d.round);
+                                        if (roundDetails[rNum] && rNum !== currentRoundNum) {
+                                            let earned = 0;
+                                            if (d.earnedPoints) earned = Number(d.earnedPoints);
+                                            else if (d.points) earned = Number(d.points);
+                                            else if (d.isTitle === true) earned = 5; 
+                                            
+                                            if (d.isArtist === true && !earned) earned = 1; 
+
+                                            if (earned > 0 && roundDetails[rNum].pts < earned) {
+                                                roundDetails[rNum].pts = earned;
+                                            }
+                                        }
+                                    }
+                                });
+
+                                // 早解きランキング（1位〜3位）の選出ログを算出
+                                let roundsGroup = {};
+                                cSnap.forEach(c => {
+                                    const d = c.val();
+                                    if (d && d.round && d.isTitle === true && d.time) {
+                                        const r = Number(d.round);
+                                        if (!roundsGroup[r]) roundsGroup[r] = [];
+                                        const idf = d.userId || d.user;
+                                        if (!roundsGroup[r].find(x => x.id === idf)) {
+                                            roundsGroup[r].push({ id: idf, name: d.user, time: Number(d.time) });
+                                        }
+                                    }
+                                });
+
+                                // 各ラウンドごとの順位確定と、このユーザーの通算1〜3位のカウント
+                                Object.keys(roundsGroup).forEach(rNum => {
+                                    let corrects = roundsGroup[rNum];
+                                    corrects.sort((a, b) => a.time - b.time);
+                                    
+                                    const rNumIdx = Number(rNum);
+                                    corrects.slice(0, 10).forEach((item, idx) => {
+                                        const cleanItemName = item.name ? String(item.name).split('#')[0].trim().toLowerCase() : "";
+                                        if (item.id === currentUserId || (cleanTargetName && cleanItemName && cleanTargetName === cleanItemName)) {
+                                            const displayRank = idx + 1;
+                                            
+                                            if (roundDetails[rNumIdx]) {
+                                                roundDetails[rNumIdx].rank = `${displayRank}位`;
+                                                
+                                                if (rNumIdx !== currentRoundNum) {
+                                                    if (displayRank === 1) roundDetails[rNumIdx].pts += 5;
+                                                    else if (displayRank === 2) roundDetails[rNumIdx].pts += 3;
+                                                    else if (displayRank === 3) roundDetails[rNumIdx].pts += 2;
+                                                }
+                                            }
+                                            
+                                            if (displayRank === 1) total1stCount++;
+                                            else if (displayRank === 2) total2ndCount++;
+                                            else if (displayRank === 3) total3ndCount++;
+                                        }
+                                    });
+                                });
+                            }
+                        } catch (err) { console.error(err); }
+
+                        // 3. 表示用テキストの組み立て
+                        const sortedRounds = Object.keys(roundDetails).map(Number).sort((a, b) => a - b);
+                        let roundListText = "";
+                        sortedRounds.forEach(r => {
+                            const info = roundDetails[r];
+                            roundListText += `・第${r}問: ${info.pts}pt 獲得 [早解き: ${info.rank}]\n`;
+                        });
+                        if (roundListText === "") roundListText = "なし\n";
+
+                        // ★動的モーダル生成：ブラウザ固有のalertを廃止し、拡大ズームが効く大きな文字の自作ポップアップを表示します
+                        const oldModal = document.getElementById('history-custom-modal');
+                        if (oldModal) oldModal.remove();
+
+                        const modalText = `
+                            <strong style="font-size: 22px; color: #fff; border-bottom: 2px solid #555; padding-bottom: 8px; display: block; margin-bottom: 15px;">【${u.name} さんの参加履歴詳細】</strong>
+                            <b style="color: #ffcb28; font-size: 18px;">■ 通算参加数:</b> <span style="font-size: 18px; color: #fff;">${sortedRounds.length}問</span><br><br>
+                            <b style="color: #ffcb28; font-size: 18px;">■ 通算早解きトップ3獲得回数:</b><br>
+                            <span style="font-size: 18px; color: #fff; padding-left: 10px; display: inline-block; margin-top: 5px;">👑 1位: <b>${total1stCount}</b>回 / 🥈 2位: <b>${total2ndCount}</b>回 / 🥉 3位: <b>${total3ndCount}</b>回</span><br><br>
+                            <b style="color: #ffcb28; font-size: 18px;">■ 各ラウンドの明細:</b><br>
+                            <div style="font-size: 16px; color: #eee; background: #222; padding: 12px; border-radius: 6px; margin-top: 8px; max-height: 250px; overflow-y: auto; line-height: 1.6;">
+                                ${roundListText.replace(/\n/g, '<br>')}
+                            </div>
+                        `;
+
+                        const modalContainer = document.createElement('div');
+                        modalContainer.id = 'history-custom-modal';
+                        modalContainer.style = 'position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 99999; font-family: sans-serif;';
+                        modalContainer.innerHTML = `
+                            <div style="background: #2c2c2c; width: 90%; max-width: 500px; padding: 25px; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.5); position: relative; border: 1px solid #444; box-sizing: border-box;">
+                                <button id="close-history-modal" style="position: absolute; top: 12px; right: 15px; background: none; border: none; color: #aaa; font-size: 24px; cursor: pointer; padding: 0; line-height: 1;">&times;</button>
+                                <div style="text-align: left; word-break: break-all;">
+                                    ${modalText}
+                                </div>
+                                <button id="close-history-modal-btn" style="margin-top: 20px; width: 100%; padding: 12px; background: #444; border: none; color: #fff; font-size: 16px; border-radius: 6px; cursor: pointer; font-weight: bold;">閉じる</button>
+                            </div>
+                        `;
+
+                        document.body.appendChild(modalContainer);
+
+                        const closeModal = () => modalContainer.remove();
+                        document.getElementById('close-history-modal').onclick = closeModal;
+                        document.getElementById('close-history-modal-btn').onclick = closeModal;
+                        modalContainer.onclick = (event) => {
+                            if (event.target === modalContainer) closeModal();
+                        };
+                    };
+                }
+
+                // 5. HTMLを一気に組み立て（title属性を廃止し、クリック可能な構成にします）
+                div.innerHTML = `<div>${crown}${u.name}${u.isAdmin ? " <small>(HOST)</small>":""}${statusText}${fullStatus}${correctMark}${artistCorrectMark}${banBtn}</div>${scoreDisplay}`;
                 div.style.opacity = isOnline ? "1" : "0.5";
                 list.appendChild(div);
             });
@@ -1017,6 +1233,11 @@ window.onYouTubeIframeAPIReady = () => {
     };
     // --- 1. 得点計算とチャット送信の共通ロジック (これを独立させる) ---
     const processScore = (text, isTitle, isArtist) => {
+        // ★修正：すでにこの問題でタイトル正解済みの場合は、裏で処理が連打されても2回目以降はすべて無視して即終了（スコア爆発を完全ガード）
+        if (isTitle && hasPointedTitle) {
+            return;
+        }
+
         if(isAdmin || isRevealedGlobal) { 
             pushChat(text, false, false); 
             return; 
@@ -1062,11 +1283,11 @@ window.onYouTubeIframeAPIReady = () => {
                 });
                 // 選択肢モードなら中央のデカ通知を隠す
                 if (!quizInfo.isChoiceMode) {
-                    showCenterNotify(`正解！(+${addedPoints}pt[合計${totalInThisRound}pt])`, "var(--success-green)");
+                    showCenterNotify(`正解！+${addedPoints}pt(合計${totalInThisRound}pt)`, "var(--success-green)");
                 }
                 // --- 修正箇所：選択肢クリックからの正解時は、左下非表示・モザイク維持・タイトル消去防止 ---
                 if (!quizInfo.isFromChoiceClick) {
-                    showNotice(`正解！ ${text} (+${addedPoints}pt[合計${totalInThisRound}pt])`, "var(--success-green)");
+                    showNotice(`正解！ ${text} +${addedPoints}pt(合計${totalInThisRound}pt)`, "var(--success-green)");
                     
                     if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
                     document.getElementById('quiz-title-mask').style.display = "none";
@@ -1079,9 +1300,13 @@ window.onYouTubeIframeAPIReady = () => {
         } else if (!quizInfo.isQuizMode && isArtist && !hasPointedArtist && !hasPointedTitle) {
             const addedPoints = Math.max(0, artistPoints - roundPointsEarned);
             if (addedPoints > 0) {
-                update(ref(db, `game/users/${myId}`), { score: increment(addedPoints) });
-                showCenterNotify(`アーティスト正解！(+${addedPoints}pt)`, "var(--gold)");
-                showNotice(`アーティスト正解！ ${text} (+${addedPoints}pt)`, "var(--gold)");
+                // ★修正：アーティスト正解時に hasCorrectedArtist: true をデータベースに保存する
+                update(ref(db, `game/users/${myId}`), { 
+                    score: increment(addedPoints),
+                    hasCorrectedArtist: true
+                });
+                showCenterNotify(`アーティスト正解！+${addedPoints}pt`, "var(--gold)");
+                showNotice(`アーティスト正解！ ${text} +${addedPoints}pt`, "var(--gold)");
                 roundPointsEarned += addedPoints;
             }
             hasPointedArtist = true;
@@ -1259,6 +1484,8 @@ window.onYouTubeIframeAPIReady = () => {
                 updates[`game/users/${child.key}/isPass`] = false;
                 updates[`game/users/${child.key}/hasPointedTitle`] = false; 
                 updates[`game/users/${child.key}/hasCorrectedTitle`] = false;
+                // ★修正：次の曲に行く時にアーティスト正解フラグもリセット
+                updates[`game/users/${child.key}/hasCorrectedArtist`] = false;
             });
             update(ref(db), updates);
         }
@@ -1276,14 +1503,14 @@ window.onYouTubeIframeAPIReady = () => {
         if (p1.startsWith("$!")) {
             // 選択肢クイズモード
             isChoice = true; isQuiz = true; isMosaic = false;
-            qText = p1.substring(2) + "（1度だけ回答可能）";
+            qText = p1.substring(2) + "[選択肢から選んでください（変更不可）]";
             aText = parts[2] || ""; 
             choices = [parts[2], parts[3], parts[4], parts[5]]; 
         } 
         else if (p1.startsWith('$"')) {
             // 選択肢モザイクモード
             isChoice = true; isQuiz = true; isMosaic = true;
-            qText = p1.substring(2) + "（1度だけ回答可能）";
+            qText = p1.substring(2) + "[選択肢から選んでください（変更不可）]";
             aText = parts[2] || "";
             choices = [parts[2], parts[3], parts[4], parts[5]];
         }
@@ -1308,6 +1535,8 @@ window.onYouTubeIframeAPIReady = () => {
                 const u = userListData[uid];
                 // 正解フラグのリセット
                 updates[`game/users/${uid}/hasCorrectedTitle`] = false;
+                // ★修正：次の曲に行く時にアーティスト正解フラグもリセット
+                updates[`game/users/${uid}/hasCorrectedArtist`] = false;
                 // 今のスコアを「前回のスコア」として保存（これで参加者画面の0表示を防ぐ）
                 updates[`game/users/${uid}/prevScore`] = u.score || 0;
             });
@@ -1333,8 +1562,23 @@ window.onYouTubeIframeAPIReady = () => {
             isClosed: keepClosed 
         });
         // --- 修正箇所ここまで ---
+        // --- 修正箇所（Firebaseへの設定送信）ここまで ---
         await sendSignal('show_video', isQuiz && !isQuiz);
-        if (isQuiz) setTimeout(() => triggerPlayWithCountdown(15), 1500);
+        if (isQuiz) {
+            // クイズモード（選択肢・モザイク含む）の時は、既存のカウントダウン処理のみを安全に実行（バグは一切起きません）
+            setTimeout(() => triggerPlayWithCountdown(15), 1500);
+        } else {
+            // ★修正：イントロクイズモード（通常の曲当て）の時だけ、裏側で一瞬（50ミリ秒）だけ動画を再生・停止させて音声データを先読み（バッファリング）させます
+            // これによりカウントダウン等の既存ロジックを一切破綻させず、1回目の再生時の音抜けだけを綺麗に解消します
+            if (player && typeof player.playVideo === 'function') {
+                try {
+                    player.playVideo();
+                    setTimeout(() => {
+                        if (player && player.pauseVideo) player.pauseVideo();
+                    }, 50);
+                } catch(e) { console.error(e); }
+            }
+        }
     };
 
     const loadRandomFromReserve = async () => {
@@ -1368,6 +1612,8 @@ window.loadRandomFromReserve = loadRandomFromReserve; // 👈 この1行を足�
                             score: 0, 
                             hasCorrectedTitle: false,
                             hasPointedTitle: false, // ここを追加
+                            // ★修正：全リセットした際にもアーティスト正解フラグをfalseへリセットする
+                            hasCorrectedArtist: false,
                             isPass: false 
                         });
                     } else {
@@ -1380,7 +1626,7 @@ window.loadRandomFromReserve = loadRandomFromReserve; // 👈 この1行を足�
         } catch (e) { alert("エラー"); }
     };
 
-    async function renderRanking() {
+async function renderRanking() {
         const [chatSnap, timeSnap] = await Promise.all([get(ref(db, 'game/chats')), get(ref(db, 'game/signal_time'))]);
         const startTime = timeSnap.val() || 0;
         const rankPanel = document.getElementById('fastest-ranking');
@@ -1400,24 +1646,53 @@ window.loadRandomFromReserve = loadRandomFromReserve; // 👈 この1行を足�
         const top10 = corrects.slice(0, 10);
         const elements = [];
         top10.forEach((item, idx) => {
-            const div = document.createElement('div'); const is1st = (idx === 0); div.className = `rank-item ${is1st ? 'is-1st' : ''}`;
-            const sec = (item.time - startTime) / 1000; div.innerHTML = `<span>${idx + 1}位: ${item.user}</span><span>${sec.toFixed(2)}s</span>`;
-            rankList.appendChild(div); elements.push({ el: div, is1st: is1st, userId: item.id });
+            const div = document.createElement('div'); 
+            
+            // ★修正：1位、2位、3位にそれぞれ相応のクラスと記号を付与して見た目を豪華にする
+            let rankClass = '';
+            let rankBadge = '';
+            if (idx === 0) { rankClass = 'is-1st'; rankBadge = '👑 '; }
+            else if (idx === 1) { rankClass = 'is-2nd'; rankBadge = '🥈 '; }
+            else if (idx === 2) { rankClass = 'is-3rd'; rankBadge = '🥉 '; }
+            
+            div.className = `rank-item ${rankClass}`;
+            const sec = (item.time - startTime) / 1000; 
+            div.innerHTML = `<span>${rankBadge}${idx + 1}位: ${item.user}</span><span>${sec.toFixed(2)}s</span>`;
+            rankList.appendChild(div); 
+            
+            // 後段のループ処理用に順位情報(rankIndex)を持たせる
+            elements.push({ el: div, rankIndex: idx, userId: item.id });
         });
-// --- 修正箇所：renderRanking内 ---
+
         // 10位（配列の最後）から1位（配列の先頭）に向かって逆順に表示させる
         for (let i = elements.length - 1; i >= 0; i--) { 
             const target = elements[i]; 
-            await new Promise(r => setTimeout(r, target.is1st ? 1500 : 400)); 
+            
+            // ★修正：順位が上になるほど相応に表示時間をタメる（1位: 2000ms / 2位: 1200ms / 3位: 800ms / その他: 400ms）
+            let delay = 500;
+            if (target.rankIndex === 0) delay = 2000;
+            else if (target.rankIndex === 1) delay = 1200;
+            else if (target.rankIndex === 2) delay = 800;
+            
+            await new Promise(r => setTimeout(r, delay)); 
             target.el.classList.add('show'); 
-            if (target.is1st) {
-// --- 修正箇所ここまで ---
-                rankPanel.classList.add('winner-anim');
-                if (isAdmin && !window.is1stPointAwarded) {
-                    window.is1stPointAwarded = true;
+            
+            // ★修正：1位、2位、3位のポイント加算処理（1位: 5pt / 2位: 3pt / 3位: 2pt）
+            if (isAdmin && !window.is1stPointAwarded) {
+                if (target.rankIndex === 0) {
+                    rankPanel.classList.add('winner-anim');
                     update(ref(db, `game/users/${target.userId}`), { score: increment(5) });
+                } else if (target.rankIndex === 1) {
+                    update(ref(db, `game/users/${target.userId}`), { score: increment(3) });
+                } else if (target.rankIndex === 2) {
+                    update(ref(db, `game/users/${target.userId}`), { score: increment(2) });
                 }
             }
+        }
+        
+        // すべての順位のポイント処理が終わったらフラグを立てる
+        if (isAdmin) {
+            window.is1stPointAwarded = true;
         }
     }
 
@@ -1477,7 +1752,7 @@ window.loadRandomFromReserve = loadRandomFromReserve; // 👈 この1行を足�
                 alert("通信エラーが発生しました。");
             }
         };
-        document.getElementById('btn-send-answer').onclick = sendAnswer;
+document.getElementById('btn-send-answer').onclick = sendAnswer;
         document.getElementById('btn-pause').onclick = () => sendSignal('pause_video', true);
         document.getElementById('answer-input').onkeypress = (e) => { if(e.key === 'Enter') sendAnswer(); };
         document.getElementById('mute-btn').onclick = toggleMute;
@@ -1502,7 +1777,19 @@ window.loadRandomFromReserve = loadRandomFromReserve; // 👈 この1行を足�
         document.getElementById('btn-video-on').onclick = () => sendSignal('show_video', true);
         document.getElementById('btn-video-off').onclick = () => sendSignal('show_video', false);
         document.getElementById('btn-reset-all').onclick = resetRoomData;
-        document.getElementById('btn-next-quiz').onclick = loadNextFromReserve;
+        
+        // ★修正：次の曲に進むボタンが押された時、早解きランキングが非表示（または存在しない）状態なら警告を出す
+        document.getElementById('btn-next-quiz').onclick = () => {
+            const rankingPanel = document.getElementById('fastest-ranking');
+            if (!rankingPanel || rankingPanel.style.display !== "block") {
+                const proceed = confirm("早解きランキングを表示していませんが、次の曲に進んでもよろしいですか？");
+                if (!proceed) {
+                    return; // キャンセルされたら次の曲へ進む処理を実行せずに中断
+                }
+            }
+            loadNextFromReserve(); // OKなら既存の次の曲へ進む処理を実行
+        };
+        
         document.getElementById('admin-kick-all').onclick = () => {
             if(confirm('自分以外の全員を退出させますか？')) {
                 update(ref(db, 'game/settings'), { forceExit: Date.now() });
