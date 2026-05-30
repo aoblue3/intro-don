@@ -1271,10 +1271,14 @@ window.onYouTubeIframeAPIReady = () => {
         if (isTitle && !hasPointedTitle) {
             if (roundPointsEarned > 0 || hasPointedTitle) return;
 
-            // ★最重要修正：クイズモード時、画面のタイマー残り時間（timeLeft）が0以下の時は、
-            // マイナス計算によるスコア暴走（200ptバグ）を防ぐため、点数加算処理をその場で100%完全に遮断（拒否）します
-            if (quizInfo.isQuizMode && typeof timeLeft !== 'undefined' && timeLeft <= 0) {
-                return;
+            // ★最重要修正：クイズモードの時、HTMLのタイマー画面（quiz-timer-display）に表示されている実際の残り秒数を直接取得します。
+            // 15秒が過ぎて「0」以下になっていた場合は、15ptが入るバグを防ぐため、その場で100%完全に処理を終了（拒否）させます。
+            if (quizInfo.isQuizMode) {
+                const timerEl = document.getElementById('quiz-timer-display');
+                const currentSeconds = timerEl ? parseInt(timerEl.innerText, 10) : 0;
+                if (isNaN(currentSeconds) || currentSeconds <= 0) {
+                    return;
+                }
             }
 
             let addedPoints = Math.max(0, titlePoints - roundPointsEarned);
