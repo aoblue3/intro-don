@@ -1269,9 +1269,13 @@ window.onYouTubeIframeAPIReady = () => {
 
         // 正解時の処理
         if (isTitle && !hasPointedTitle) {
-            // ★最重要修正：ブラウザや通信のバグでこの正解処理が超高速で2回以上連続実行された場合、
-            // すでに変数（roundPointsEarned）に点数が加算され始めているか、すでにフラグが立っていれば、2回目以降の処理を完全に無視（遮断）して200ptへの爆増を防ぎます
             if (roundPointsEarned > 0 || hasPointedTitle) return;
+
+            // ★最重要修正：クイズモード時、画面のタイマー残り時間（timeLeft）が0以下の時は、
+            // マイナス計算によるスコア暴走（200ptバグ）を防ぐため、点数加算処理をその場で100%完全に遮断（拒否）します
+            if (quizInfo.isQuizMode && typeof timeLeft !== 'undefined' && timeLeft <= 0) {
+                return;
+            }
 
             let addedPoints = Math.max(0, titlePoints - roundPointsEarned);
             if (window.is1stPointAwarded) addedPoints = Math.min(addedPoints, 15);
