@@ -1269,6 +1269,10 @@ window.onYouTubeIframeAPIReady = () => {
 
         // 正解時の処理
         if (isTitle && !hasPointedTitle) {
+            // ★最重要修正：ブラウザや通信のバグでこの正解処理が超高速で2回以上連続実行された場合、
+            // すでに変数（roundPointsEarned）に点数が加算され始めているか、すでにフラグが立っていれば、2回目以降の処理を完全に無視（遮断）して200ptへの爆増を防ぎます
+            if (roundPointsEarned > 0 || hasPointedTitle) return;
+
             let addedPoints = Math.max(0, titlePoints - roundPointsEarned);
             if (window.is1stPointAwarded) addedPoints = Math.min(addedPoints, 15);
 
@@ -1298,6 +1302,9 @@ window.onYouTubeIframeAPIReady = () => {
                 roundPointsEarned += addedPoints;
             }
         } else if (!quizInfo.isQuizMode && isArtist && !hasPointedArtist && !hasPointedTitle) {
+            // ★最重要修正：アーティスト正解側でも同様に、すでに点数が加算されていれば処理を完全に遮断します
+            if (roundPointsEarned > 0 || hasPointedArtist) return;
+
             const addedPoints = Math.max(0, artistPoints - roundPointsEarned);
             if (addedPoints > 0) {
                 // ★修正：アーティスト正解時に hasCorrectedArtist: true をデータベースに保存する
