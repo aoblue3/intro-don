@@ -1659,19 +1659,15 @@ window.onYouTubeIframeAPIReady = () => {
             // クイズモード（選択肢・モザイク含む）の時は、既存のカウントダウン処理のみを安全に実行（バグは一切起きません）
             setTimeout(() => triggerPlayWithCountdown(15), 1500);
         } else {
-            // ★修正：イントロクイズモード（通常の曲当て）の時だけ、裏側で一瞬（50ミリ秒）だけ動画を再生・停止させて音声データを先読み（バッファリング）させます
-            // これによりカウントダウン等の既存ロジックを一切破綻させず、1回目の再生時の音抜けだけを綺麗に解消します
-            if (player && typeof player.playVideo === 'function') {
+            // ★修正：cueVideoByIdで動画を先読み（バッファリング）させる。再生はせず読み込みだけ行うため音抜けが発生しない
+            if (player && typeof player.cueVideoById === 'function') {
                 try {
-                    player.playVideo();
-                    setTimeout(() => {
-                        if (player && player.pauseVideo) player.pauseVideo();
-                    }, 50);
+                    player.cueVideoById({ videoId: vid, startSeconds: Number(startTime) || 0 });
                 } catch(e) { console.error(e); }
             }
         }
     };
-
+ 
     const loadRandomFromReserve = async () => {
     // 1. 本物の関数に直接「true（ランダムに処理して！）」とだけ伝えて呼び出す
     await loadNextFromReserve(true);
