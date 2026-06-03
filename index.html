@@ -328,6 +328,7 @@
             <button id="btn-send-answer" style="background:var(--primary-color); color:white; border:none; border-radius:25px; padding:10px 25px; cursor:pointer;">送信</button>
             <button id="fullscreen-btn" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">全画面</button>
             <button id="pass-btn" onclick="sendPassSignal()" style="background:#888; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">パス</button>
+            <button id="my-history-btn" onclick="showMyHistory()" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">履歴</button>
             <div class="volume-controls">
                 <span id="mute-btn" style="cursor:pointer;">🔈</span>
                 <input type="range" id="volume-slider" min="0" max="100" value="50">
@@ -362,6 +363,7 @@
 
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
+    const pageJoinTime = Date.now();
     let player, myName = "", myId = "", isAdmin = false;
     let quizInfo = { title: "", artist: "", round: 0, isQuizMode: false, isMosaicMode: false, questionText: "", startTimeOffset: 0, volumeRatio: 1.0 };
     let hasPointedTitle = false, hasPointedArtist = false, isRevealedGlobal = false;
@@ -853,8 +855,30 @@ window.onYouTubeIframeAPIReady = () => {
                 document.getElementById('quiz-title-mask').style.display = "none";
                 document.getElementById('mosaic-overlay').style.display = "none";
 
-                // 1. まず最初に開示フラグを true にする（これで prevScore の隠蔽制限が解除されます）
+                // 1. まず最初に開示フラグを true にする
                 isRevealedGlobal = true;
+
+                // ★追記：未回答者の参加履歴を「0pt」で確定させる救済ロジック
+                const currentRoundNum = quizInfo.round || quizInfo.currentRound || 1;
+
+                // ★修正：途中参加者が過去のラウンドを汚さないように制限をかける
+                // quizInfo が空だったり、部屋に入った直後の場合は実行しないようにします
+                if (myId && quizInfo && quizInfo.title) { 
+                    get(ref(db, `game/history/${currentRoundNum}/${myId}`)).then((snapshot) => {
+                        if (!snapshot.exists()) {
+                            // ここで「早解き: 正解」と出てしまうのを防ぐため、明示的に「圏外」を指定
+                            set(ref(db, `game/history/${currentRoundNum}/${myId}`), {
+                                ptsDisplay: "0pt",
+                                ptsRaw: 0,
+                                rank: "圏外" // ★ここを「正解」ではなく「圏外」に固定
+                            });
+                            update(ref(db, `game/users/${myId}`), {
+                                [`history/round_${currentRoundNum}`]: "0pt",
+                                savedPtsText: "0pt"
+                            });
+                        }
+                    });
+                }
                 
                 // --- 選択肢モード時は正解者だけに正解通知を出す ---
                 if (quizInfo.isChoiceMode) {
@@ -1043,118 +1067,88 @@ window.onYouTubeIframeAPIReady = () => {
                         const cleanTargetName = u.name ? String(u.name).split('#')[0].trim().toLowerCase() : "";
 
                         try {
-                            // 1. 最新のチャット履歴を取得
+                            // 【修正】クリックされた瞬間に初めて非同期でデータを安全に取得
                             const cSnap = await get(ref(db, 'game/chats'));
+                            const hSnap = await get(ref(db, 'game/history'));
                             
-                            if (cSnap.exists()) {
-                                cSnap.forEach(c => {
-                                    const d = c.val();
-                                    if (!d) return;
-                                    
-                                    const chatUserId = d.userId || "";
-                                    const chatUserName = d.user ? String(d.user).split('#')[0].trim().toLowerCase() : "";
-                                    
-                                    if (
-                                        (currentUserId && chatUserId && currentUserId === chatUserId) ||
-                                        (cleanTargetName && chatUserName && cleanTargetName === chatUserName)
-                                    ) {
-                                        const rNum = Number(d.round);
-                                        if (rNum) {
-                                            if (!roundDetails[rNum]) {
-                                                roundDetails[rNum] = { pts: 0, rank: "圏外" };
-                                            }
-                                        }
-                                    }
-                                });
-                            }
-
-                            // 現在進行中の最新ラウンド（quizInfo.round）の獲得ポイントをリアルタイム算出
                             const currentRoundNum = Number(quizInfo?.round || 0);
-                            if (currentRoundNum > 0) {
-                                if (!roundDetails[currentRoundNum]) {
-                                    roundDetails[currentRoundNum] = { pts: 0, rank: "圏外" };
-                                }
-                                const currentScore = Number(u.score || 0);
-                                const previousScore = Number(u.prevScore || 0);
-                                const diffPoints = Math.max(0, currentScore - previousScore);
-                                roundDetails[currentRoundNum].pts = diffPoints;
-                            }
 
-                            // 過去の各ラウンドの獲得ポイントの補正
-                            if (cSnap.exists()) {
-                                cSnap.forEach(c => {
-                                    const d = c.val();
-                                    if (d && d.round) {
-                                        const rNum = Number(d.round);
-                                        if (roundDetails[rNum] && rNum !== currentRoundNum) {
-                                            let earned = 0;
-                                            if (d.earnedPoints) earned = Number(d.earnedPoints);
-                                            else if (d.points) earned = Number(d.points);
-                                            else if (d.isTitle === true) earned = 5; 
-                                            
-                                            if (d.isArtist === true && !earned) earned = 1; 
-
-                                            if (earned > 0 && roundDetails[rNum].pts < earned) {
-                                                roundDetails[rNum].pts = earned;
-                                            }
-                                        }
-                                    }
-                                });
-
-                                // 早解きランキング（1位〜3位）の選出ログを算出
-                                let roundsGroup = {};
-                                cSnap.forEach(c => {
-                                    const d = c.val();
-                                    if (d && d.round && d.isTitle === true && d.time) {
-                                        const r = Number(d.round);
-                                        if (!roundsGroup[r]) roundsGroup[r] = [];
-                                        const idf = d.userId || d.user;
-                                        if (!roundsGroup[r].find(x => x.id === idf)) {
-                                            roundsGroup[r].push({ id: idf, name: d.user, time: Number(d.time) });
-                                        }
-                                    }
-                                });
-
-                                // 各ラウンドごとの順位確定と、このユーザーの通算1〜3位のカウント
-                                Object.keys(roundsGroup).forEach(rNum => {
-                                    let corrects = roundsGroup[rNum];
-                                    corrects.sort((a, b) => a.time - b.time);
+                            // --- 過去のラウンドのポイント確定処理 ---
+                            if (hSnap.exists()) {
+                                hSnap.forEach(roundSnap => {
+                                    const rNum = Number(roundSnap.key);
+                                    const roundData = roundSnap.val();
+                                    if (!roundData) return;
+                                    const userHistory = roundData[currentUserId];
                                     
-                                    const rNumIdx = Number(rNum);
-                                    corrects.slice(0, 10).forEach((item, idx) => {
-                                        const cleanItemName = item.name ? String(item.name).split('#')[0].trim().toLowerCase() : "";
-                                        if (item.id === currentUserId || (cleanTargetName && cleanItemName && cleanTargetName === cleanItemName)) {
-                                            const displayRank = idx + 1;
-                                            
-                                            if (roundDetails[rNumIdx]) {
-                                                roundDetails[rNumIdx].rank = `${displayRank}位`;
-                                                
-                                                if (rNumIdx !== currentRoundNum) {
-                                                    if (displayRank === 1) roundDetails[rNumIdx].pts += 5;
-                                                    else if (displayRank === 2) roundDetails[rNumIdx].pts += 3;
-                                                    else if (displayRank === 3) roundDetails[rNumIdx].pts += 2;
-                                                }
-                                            }
-                                            
-                                            if (displayRank === 1) total1stCount++;
-                                            else if (displayRank === 2) total2ndCount++;
-                                            else if (displayRank === 3) total3ndCount++;
+                                    if (userHistory && rNum !== currentRoundNum) {
+                                        if (!roundDetails[rNum]) {
+                                            roundDetails[rNum] = { pts: "0pt", rank: "圏外" };
                                         }
-                                    });
+                                        // 保存されたそのままのデータをストレートに反映
+                                        roundDetails[rNum].pts = userHistory.ptsDisplay || "0pt";
+                                        
+                                        // 順位も保存されたデータから復元
+                                        const rVal = userHistory.rank;
+                                        if (typeof rVal === 'number') {
+                                            roundDetails[rNum].rank = `${rVal}位`;
+                                            if (rVal === 1) total1stCount++;
+                                            else if (rVal === 2) total2ndCount++;
+                                            else if (rVal === 3) total3ndCount++;
+                                        } else {
+                                            roundDetails[rNum].rank = rVal || "正解";
+                                        }
+                                    }
                                 });
                             }
-                        } catch (err) { console.error(err); }
+
+                            // --- 現在進行中の最新ラウンドのリアルタイム算出 ---
+                          if (currentRoundNum > 0 && (u.hasPointedTitle || u.hasPointedArtist)) {
+                          if (!roundDetails[currentRoundNum]) {
+                              roundDetails[currentRoundNum] = { pts: "0pt", rank: "判定中" };
+                             }
+                          const currentScore = Number(u.score || 0);
+                          const previousScore = Number(u.prevScore || 0);
+                          const totalDiff = Math.max(0, currentScore - previousScore);
+
+                          // 10ptを超える分（早解きボーナスなど）を分かりやすく内訳表示
+                          if (totalDiff > 10) {
+                              roundDetails[currentRoundNum].pts = `10pt (+${totalDiff - 10}pt)`;
+                          } else {
+                              roundDetails[currentRoundNum].pts = totalDiff + "pt";
+                          }
+
+                          // ★修正：game/history から現在ラウンドの順位を取得して表示する
+                          const currentHistorySnap = await get(ref(db, `game/history/${currentRoundNum}/${u.id}`));
+                          if (currentHistorySnap.exists()) {
+                              const histEntry = currentHistorySnap.val();
+                              const rVal = histEntry.rank;
+                              if (rVal === 1) { roundDetails[currentRoundNum].rank = "1位"; total1stCount++; }
+                              else if (rVal === 2) { roundDetails[currentRoundNum].rank = "2位"; total2ndCount++; }
+                              else if (rVal === 3) { roundDetails[currentRoundNum].rank = "3位"; total3ndCount++; }
+                              else if (typeof rVal === 'string') { roundDetails[currentRoundNum].rank = rVal; }
+                              else { roundDetails[currentRoundNum].rank = "圏外"; }
+                          } else {
+                              roundDetails[currentRoundNum].rank = "判定中";
+                          }
+                      }
+
+                            
+
+                        } catch (err) { 
+                            console.error("履歴集計エラー:", err); 
+                        }
 
                         // 3. 表示用テキストの組み立て
                         const sortedRounds = Object.keys(roundDetails).map(Number).sort((a, b) => a - b);
                         let roundListText = "";
                         sortedRounds.forEach(r => {
                             const info = roundDetails[r];
-                            roundListText += `・第${r}問: ${info.pts}pt 獲得 [早解き: ${info.rank}]\n`;
+                            roundListText += `・第${r}問: ${info.pts} 獲得 [早解き: ${info.rank}]\n`;
                         });
                         if (roundListText === "") roundListText = "なし\n";
 
-                        // ★動的モーダル生成：ブラウザ固有のalertを廃止し、拡大ズームが効く大きな文字の自作ポップアップを表示します
+                        // 動的モーダル生成
                         const oldModal = document.getElementById('history-custom-modal');
                         if (oldModal) oldModal.remove();
 
@@ -1233,7 +1227,12 @@ window.onYouTubeIframeAPIReady = () => {
     };
     // --- 1. 得点計算とチャット送信の共通ロジック (これを独立させる) ---
     const processScore = (text, isTitle, isArtist) => {
-        // ★修正：すでにこの問題でタイトル正解済みの場合は、裏で処理が連打されても2回目以降はすべて無視して即終了（スコア爆発を完全ガード）
+        // ★追加ガード：入室から2秒以内は、過去のデータの「残響」による誤動作を防ぐ
+        if (typeof pageJoinTime !== 'undefined' && Date.now() - pageJoinTime < 2000) {
+            return;
+        }
+
+        // ★既存の修正：すでにこの問題でタイトル正解済みの場合は...（以下そのまま）
         if (isTitle && hasPointedTitle) {
             return;
         }
@@ -1269,37 +1268,109 @@ window.onYouTubeIframeAPIReady = () => {
 
         // 正解時の処理
         if (isTitle && !hasPointedTitle) {
-            if (roundPointsEarned > 0 || hasPointedTitle) return;
+            // 【修正箇所①】アーティスト先当て時も曲名が通るよう、曲名での重複判定のみに修正
+            if (hasPointedTitle) return;
 
-            // ★最重要修正：クイズモードの時、HTMLのタイマー画面（quiz-timer-display）に表示されている実際の残り秒数を直接取得します。
-            // 15秒が過ぎて「0」以下になっていた場合は、15ptが入るバグを防ぐため、その場で100%完全に処理を終了（拒否）させます。
+            let currentSeconds = 0;
+            let isTimeUp = false; // ★タイムアップしているかどうかの目印
+
             if (quizInfo.isQuizMode) {
                 const timerEl = document.getElementById('quiz-timer-display');
-                const currentSeconds = timerEl ? parseInt(timerEl.innerText, 10) : 0;
-                if (isNaN(currentSeconds) || currentSeconds <= 0) {
-                    return;
+                
+                // ★最終最強修正：タイマー要素が画面に存在しない、またはスタイルが非表示（displayが"none"）になっている場合は、
+                // 15秒が完全に経過した後の待機時間（17秒目など）であると100%確実に断定し、タイムアップフラグを立てます。
+                if (!timerEl || timerEl.style.display === "none" || window.getComputedStyle(timerEl).display === "none") {
+                    isTimeUp = true;
+                } else {
+                    const timerText = timerEl.innerText.trim();
+                    if (!timerText || timerText === "" || timerText === "0") {
+                        isTimeUp = true;
+                    } else {
+                        currentSeconds = parseInt(timerText, 10);
+                        if (isNaN(currentSeconds) || currentSeconds <= 0) {
+                            isTimeUp = true;
+                        }
+                    }
                 }
             }
 
-            let addedPoints = Math.max(0, titlePoints - roundPointsEarned);
-            if (window.is1stPointAwarded) addedPoints = Math.min(addedPoints, 15);
+            // ★最重要修正：獲得点数の計算
+            let addedPoints = 0;
+            if (quizInfo.isQuizMode) {
+                if (isTimeUp) {
+                    addedPoints = 0;
+                } else {
+                    addedPoints = currentSeconds; 
+                }
+            } else {
+                addedPoints = Math.max(0, titlePoints - roundPointsEarned);
+                if (window.is1stPointAwarded) addedPoints = Math.min(addedPoints, 15);
+            }
 
-            if (addedPoints > 0) {
-                // この問題での合計点を計算
+            if (addedPoints >= 0) {
                 const totalInThisRound = roundPointsEarned + addedPoints;
 
-                update(ref(db, `game/users/${myId}`), { 
-                    score: increment(addedPoints), 
-                    hasCorrectedTitle: true,
-                    hasPointedTitle: true 
+                get(ref(db, `game/history/${quizInfo.round || quizInfo.currentRound || 1}`)).then((snapshot) => {
+                    const historyData = snapshot.val() || {};
+                    
+                    // ★修正：順位枠を消費している人（1〜3位）だけを数える
+                    const correctCount = Object.keys(historyData).filter(id => {
+                        if (id === myId) return false; 
+                        const entry = historyData[id];
+                        // rankが 1, 2, 3 のいずれかである場合のみカウント
+                        return entry && (entry.rank === 1 || entry.rank === 2 || entry.rank === 3);
+                    }).length;
+
+                    const myRankNum = (addedPoints > 0) ? (correctCount + 1) : 4;
+
+                    let currentBonus = 0;
+                    if (addedPoints > 0) {
+                        if (myRankNum === 1) currentBonus = 5;
+                        else if (myRankNum === 2) currentBonus = 3;
+                        else if (myRankNum === 3) currentBonus = 2;
+                    }
+
+                    // 内部処理用の本当の合計値
+                    const finalTotalPoints = addedPoints + currentBonus;
+
+                    // ★バグ修正：クイズモードとイントロモードで表示する点数の基準を正しく分ける
+                    // クイズモード ＝ 今回の秒数(addedPoints)
+                    // イントロモード ＝ アーティスト点も含めたこのラウンドの総得点(totalInThisRound)
+                    let myBase = quizInfo.isQuizMode ? addedPoints : totalInThisRound;
+                    const displayPtsText = `${myBase}pt`;
+
+                    // --- 1. 個人の更新 ---
+                    update(ref(db, `game/users/${myId}`), { 
+                        score: increment(addedPoints), // ★ここを基礎点(10pt等)のみにする
+                        hasCorrectedTitle: addedPoints > 0 ? true : hasCorrectedTitle,
+                        hasPointedTitle: addedPoints > 0 ? true : hasPointedTitle,
+                        isQuizModeRound: quizInfo.isQuizMode ? true : false,
+                        savedPtsText: displayPtsText, 
+                        [`history/round_${quizInfo.currentRound || 1}`]: displayPtsText 
+                    });
+
+                    // --- 2. 履歴DBへの保存 ---
+                    set(ref(db, `game/history/${quizInfo.round || quizInfo.currentRound || 1}/${myId}`), {
+                        ptsDisplay: displayPtsText,
+                        ptsRaw: quizInfo.isQuizMode ? addedPoints : totalInThisRound, // イントロモードはアーティスト分も含めた合計を保存
+                        rank: (myRankNum <= 3 && addedPoints > 0) ? myRankNum : "圏外"
+                    });
                 });
-                // 選択肢モードなら中央のデカ通知を隠す
+
                 if (!quizInfo.isChoiceMode) {
-                    showCenterNotify(`正解！+${addedPoints}pt(合計${totalInThisRound}pt)`, "var(--success-green)");
+                    if (addedPoints > 0) {
+                        showCenterNotify(`正解！+${addedPoints}pt(合計${totalInThisRound}pt)`, "var(--success-green)");
+                    } else {
+                        showCenterNotify(`正解！（時間切れ 0pt）`, "var(--gray)");
+                    }
                 }
                 // --- 修正箇所：選択肢クリックからの正解時は、左下非表示・モザイク維持・タイトル消去防止 ---
                 if (!quizInfo.isFromChoiceClick) {
-                    showNotice(`正解！ ${text} +${addedPoints}pt(合計${totalInThisRound}pt)`, "var(--success-green)");
+                    if (addedPoints > 0) {
+                        showNotice(`正解！ ${text} +${addedPoints}pt(合計${totalInThisRound}pt)`, "var(--success-green)");
+                    } else {
+                        showNotice(`正解！ ${text} (時間切れ 0pt)`, "var(--gray)");
+                    }
                     
                     if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
                     document.getElementById('quiz-title-mask').style.display = "none";
@@ -1307,19 +1378,28 @@ window.onYouTubeIframeAPIReady = () => {
                 }
                 // ---------------------------------------------------------------------------------
                 
-                roundPointsEarned += addedPoints;
+                //roundPointsEarned += addedPoints;
             }
         } else if (!quizInfo.isQuizMode && isArtist && !hasPointedArtist && !hasPointedTitle) {
-            // ★最重要修正：アーティスト正解側でも同様に、すでに点数が加算されていれば処理を完全に遮断します
-            if (roundPointsEarned > 0 || hasPointedArtist) return;
+            if (hasPointedArtist) return;
 
             const addedPoints = Math.max(0, artistPoints - roundPointsEarned);
             if (addedPoints > 0) {
-                // ★修正：アーティスト正解時に hasCorrectedArtist: true をデータベースに保存する
+                const artistPtsValue = `${addedPoints}pt`; 
+                const currentRound = quizInfo.round || quizInfo.currentRound || 1;
+
                 update(ref(db, `game/users/${myId}`), { 
                     score: increment(addedPoints),
-                    hasCorrectedArtist: true
+                    hasCorrectedArtist: true,
+                    savedPtsText: artistPtsValue 
                 });
+
+                set(ref(db, `game/history/${currentRound}/${myId}`), {
+                    ptsDisplay: artistPtsValue,
+                    ptsRaw: addedPoints,
+                    rank: "アーティスト正解" // こちらはボーナスがないので文字列のまま
+                });
+
                 showCenterNotify(`アーティスト正解！+${addedPoints}pt`, "var(--gold)");
                 showNotice(`アーティスト正解！ ${text} +${addedPoints}pt`, "var(--gold)");
                 roundPointsEarned += addedPoints;
@@ -1501,6 +1581,9 @@ window.onYouTubeIframeAPIReady = () => {
                 updates[`game/users/${child.key}/hasCorrectedTitle`] = false;
                 // ★修正：次の曲に行く時にアーティスト正解フラグもリセット
                 updates[`game/users/${child.key}/hasCorrectedArtist`] = false;
+                
+                // ★追加：次の曲に切り替わる際、全ユーザーの前回のテキストデータを安全に初期化（ただし上のラウンド別履歴 history/round_〇〇 は残ります）
+                updates[`game/users/${child.key}/savedPtsText`] = "";
             });
             update(ref(db), updates);
         }
@@ -1554,6 +1637,9 @@ window.onYouTubeIframeAPIReady = () => {
                 updates[`game/users/${uid}/hasCorrectedArtist`] = false;
                 // 今のスコアを「前回のスコア」として保存（これで参加者画面の0表示を防ぐ）
                 updates[`game/users/${uid}/prevScore`] = u.score || 0;
+                
+                // ★追加修正：次の曲に切り替わる際、全ユーザーの前回のテキストデータを安全にリセット（ただし、保存したラウンド別履歴 history/round_〇〇 はそのまま残ります）
+                updates[`game/users/${uid}/savedPtsText`] = "";
             });
             await update(ref(db), updates);
         }
@@ -1574,7 +1660,10 @@ window.onYouTubeIframeAPIReady = () => {
             questionText: qText, 
             startTimeOffset: startTime, 
             volumeRatio: volumeRatio, 
-            isClosed: keepClosed 
+            isClosed: keepClosed,
+            // ★超重要：次のラウンドに進むこの瞬間に、そのラウンドが「クイズモード（選択肢含む）」なのか「イントロモード」なのかの
+            // 決定的なフラグを、過去の履歴が壊されないための防衛策として、設定データ（settings）の中に正しく刻み込んで送信します。
+            isQuizModeRound: (isQuiz || isChoice) ? true : false
         });
         // --- 修正箇所ここまで ---
         // --- 修正箇所（Firebaseへの設定送信）ここまで ---
@@ -1605,15 +1694,20 @@ window.loadRandomFromReserve = loadRandomFromReserve; // 👈 この1行を足�
     const resetRoomData = async () => {
         if(!confirm("リセット？")) return;
         try {
+            // 既存の削除処理
             await remove(ref(db, 'game/chats'));
             await set(ref(db, 'game/signal_time'), 0);
+            
+            // ★追加：確定履歴（history）を完全に削除
+            await remove(ref(db, 'game/history'));
+
             const settingsSnap = await get(ref(db, 'game/settings'));
             const currentIsClosed = settingsSnap.val()?.isClosed || false;
             await set(ref(db, 'game/settings'), { 
                 videoId: 'dQw4w9WgXcQ', title: '', artist: '', round: 0, 
                 isQuizMode: false, isMosaicMode: false, 
-                isChoiceMode: false, // ★追加
-                choices: [],         // ★追加
+                isChoiceMode: false, 
+                choices: [], 
                 questionText: "", startTimeOffset: 0, volumeRatio: 1.0, 
                 isClosed: currentIsClosed 
             });
@@ -1697,10 +1791,40 @@ async function renderRanking() {
                 if (target.rankIndex === 0) {
                     rankPanel.classList.add('winner-anim');
                     update(ref(db, `game/users/${target.userId}`), { score: increment(5) });
+                    // ★追加：historyにボーナス込みで上書き保存
+                    get(ref(db, `game/history/${quizInfo.round}/${target.userId}`)).then(snap => {
+                        if (snap.exists()) {
+                            const base = snap.val().ptsRaw || 0;
+                            const bonus = 5;
+                            const newPts = base + bonus;
+                            const newDisplay = base > 0 ? `${base}pt (+${bonus}pt)` : `0pt`;
+                            set(ref(db, `game/history/${quizInfo.round}/${target.userId}`), { ptsDisplay: newDisplay, ptsRaw: newPts, rank: 1 });
+                        }
+                    });
                 } else if (target.rankIndex === 1) {
                     update(ref(db, `game/users/${target.userId}`), { score: increment(3) });
+                    // ★追加：historyにボーナス込みで上書き保存
+                    get(ref(db, `game/history/${quizInfo.round}/${target.userId}`)).then(snap => {
+                        if (snap.exists()) {
+                            const base = snap.val().ptsRaw || 0;
+                            const bonus = 3;
+                            const newPts = base + bonus;
+                            const newDisplay = base > 0 ? `${base}pt (+${bonus}pt)` : `0pt`;
+                            set(ref(db, `game/history/${quizInfo.round}/${target.userId}`), { ptsDisplay: newDisplay, ptsRaw: newPts, rank: 2 });
+                        }
+                    });
                 } else if (target.rankIndex === 2) {
                     update(ref(db, `game/users/${target.userId}`), { score: increment(2) });
+                    // ★追加：historyにボーナス込みで上書き保存
+                    get(ref(db, `game/history/${quizInfo.round}/${target.userId}`)).then(snap => {
+                        if (snap.exists()) {
+                            const base = snap.val().ptsRaw || 0;
+                            const bonus = 2;
+                            const newPts = base + bonus;
+                            const newDisplay = base > 0 ? `${base}pt (+${bonus}pt)` : `0pt`;
+                            set(ref(db, `game/history/${quizInfo.round}/${target.userId}`), { ptsDisplay: newDisplay, ptsRaw: newPts, rank: 3 });
+                        }
+                    });
                 }
             }
         }
@@ -1975,7 +2099,88 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
             console.error("解除失敗:", e);
         }
     };
-// --- ここまで追加 ---
+
+    /**
+     * 参加者が自分自身の履歴を見る関数
+     */
+    window.showMyHistory = async () => {
+        if (!myId || !myName) return;
+
+        let roundDetails = {};
+        let total1stCount = 0;
+        let total2ndCount = 0;
+        let total3ndCount = 0;
+
+        try {
+            const hSnap = await get(ref(db, 'game/history'));
+            const currentRoundNum = Number(quizInfo?.round || 0);
+
+            if (hSnap.exists()) {
+                hSnap.forEach(roundSnap => {
+                    const rNum = Number(roundSnap.key);
+                    const roundData = roundSnap.val();
+                    if (!roundData) return;
+                    const userHistory = roundData[myId];
+                    if (userHistory) {
+                        if (!roundDetails[rNum]) roundDetails[rNum] = { pts: "0pt", rank: "圏外" };
+                        roundDetails[rNum].pts = userHistory.ptsDisplay || "0pt";
+                        const rVal = userHistory.rank;
+                        if (rVal === 1) { roundDetails[rNum].rank = "1位"; total1stCount++; }
+                        else if (rVal === 2) { roundDetails[rNum].rank = "2位"; total2ndCount++; }
+                        else if (rVal === 3) { roundDetails[rNum].rank = "3位"; total3ndCount++; }
+                        else if (typeof rVal === 'string') { roundDetails[rNum].rank = rVal; }
+                        else { roundDetails[rNum].rank = "圏外"; }
+                    }
+                });
+            }
+        } catch (err) {
+            console.error("自分の履歴取得エラー:", err);
+        }
+
+        const sortedRounds = Object.keys(roundDetails).map(Number).sort((a, b) => a - b);
+        let roundListText = "";
+        sortedRounds.forEach(r => {
+            const info = roundDetails[r];
+            roundListText += `・第${r}問: ${info.pts} 獲得 [早解き: ${info.rank}]\n`;
+        });
+        if (roundListText === "") roundListText = "なし\n";
+
+        const oldModal = document.getElementById('my-history-modal');
+        if (oldModal) oldModal.remove();
+
+        const modalText = `
+            <strong style="font-size: 22px; color: #fff; border-bottom: 2px solid #555; padding-bottom: 8px; display: block; margin-bottom: 15px;">【${myName} さんの参加履歴詳細】</strong>
+            <b style="color: #ffcb28; font-size: 18px;">■ 通算参加数:</b> <span style="font-size: 18px; color: #fff;">${sortedRounds.length}問</span><br><br>
+            <b style="color: #ffcb28; font-size: 18px;">■ 通算早解きトップ3獲得回数:</b><br>
+            <span style="font-size: 18px; color: #fff; padding-left: 10px; display: inline-block; margin-top: 5px;">👑 1位: <b>${total1stCount}</b>回 / 🥈 2位: <b>${total2ndCount}</b>回 / 🥉 3位: <b>${total3ndCount}</b>回</span><br><br>
+            <b style="color: #ffcb28; font-size: 18px;">■ 各ラウンドの明細:</b><br>
+            <div style="font-size: 16px; color: #eee; background: #222; padding: 12px; border-radius: 6px; margin-top: 8px; max-height: 250px; overflow-y: auto; line-height: 1.6;">
+                ${roundListText.replace(/\n/g, '<br>')}
+            </div>
+        `;
+
+        const modalContainer = document.createElement('div');
+        modalContainer.id = 'my-history-modal';
+        modalContainer.style = 'position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 99999; font-family: sans-serif;';
+        modalContainer.innerHTML = `
+            <div style="background: #2c2c2c; width: 90%; max-width: 500px; padding: 25px; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.5); position: relative; border: 1px solid #444; box-sizing: border-box;">
+                <button id="close-my-history-modal" style="position: absolute; top: 12px; right: 15px; background: none; border: none; color: #aaa; font-size: 24px; cursor: pointer; padding: 0; line-height: 1;">&times;</button>
+                <div style="text-align: left; word-break: break-all;">
+                    ${modalText}
+                </div>
+                <button id="close-my-history-modal-btn" style="margin-top: 20px; width: 100%; padding: 12px; background: #444; border: none; color: #fff; font-size: 16px; border-radius: 6px; cursor: pointer; font-weight: bold;">閉じる</button>
+            </div>
+        `;
+
+        document.body.appendChild(modalContainer);
+
+        const closeModal = () => modalContainer.remove();
+        document.getElementById('close-my-history-modal').onclick = closeModal;
+        document.getElementById('close-my-history-modal-btn').onclick = closeModal;
+        modalContainer.onclick = (event) => {
+            if (event.target === modalContainer) closeModal();
+        };
+    };
 </script>
 </body>
 </html>
