@@ -1102,36 +1102,23 @@ window.onYouTubeIframeAPIReady = () => {
                                 });
                             }
 
-                            // --- 現在進行中の最新ラウンドのリアルタイム算出 ---
-                          if (currentRoundNum > 0 && (u.hasPointedTitle || u.hasPointedArtist)) {
-                          if (!roundDetails[currentRoundNum]) {
-                              roundDetails[currentRoundNum] = { pts: "0pt", rank: "判定中" };
-                             }
-                          const currentScore = Number(u.score || 0);
-                          const previousScore = Number(u.prevScore || 0);
-                          const totalDiff = Math.max(0, currentScore - previousScore);
-
-                          // 10ptを超える分（早解きボーナスなど）を分かりやすく内訳表示
-                          if (totalDiff > 10) {
-                              roundDetails[currentRoundNum].pts = `10pt (+${totalDiff - 10}pt)`;
-                          } else {
-                              roundDetails[currentRoundNum].pts = totalDiff + "pt";
+                            // --- 現在進行中の最新ラウンド：historyから直接取得（過去ラウンドと同じ処理）---
+                          if (currentRoundNum > 0) {
+                              const currentHistorySnap = await get(ref(db, `game/history/${currentRoundNum}/${u.id}`));
+                              if (currentHistorySnap.exists()) {
+                                  const histEntry = currentHistorySnap.val();
+                                  if (!roundDetails[currentRoundNum]) {
+                                      roundDetails[currentRoundNum] = { pts: "0pt", rank: "判定中" };
+                                  }
+                                  roundDetails[currentRoundNum].pts = histEntry.ptsDisplay || "0pt";
+                                  const rVal = histEntry.rank;
+                                  if (rVal === 1) { roundDetails[currentRoundNum].rank = "1位"; total1stCount++; }
+                                  else if (rVal === 2) { roundDetails[currentRoundNum].rank = "2位"; total2ndCount++; }
+                                  else if (rVal === 3) { roundDetails[currentRoundNum].rank = "3位"; total3ndCount++; }
+                                  else if (typeof rVal === 'string') { roundDetails[currentRoundNum].rank = rVal; }
+                                  else { roundDetails[currentRoundNum].rank = "判定中"; }
+                              }
                           }
-
-                          // ★修正：game/history から現在ラウンドの順位を取得して表示する
-                          const currentHistorySnap = await get(ref(db, `game/history/${currentRoundNum}/${u.id}`));
-                          if (currentHistorySnap.exists()) {
-                              const histEntry = currentHistorySnap.val();
-                              const rVal = histEntry.rank;
-                              if (rVal === 1) { roundDetails[currentRoundNum].rank = "1位"; total1stCount++; }
-                              else if (rVal === 2) { roundDetails[currentRoundNum].rank = "2位"; total2ndCount++; }
-                              else if (rVal === 3) { roundDetails[currentRoundNum].rank = "3位"; total3ndCount++; }
-                              else if (typeof rVal === 'string') { roundDetails[currentRoundNum].rank = rVal; }
-                              else { roundDetails[currentRoundNum].rank = "圏外"; }
-                          } else {
-                              roundDetails[currentRoundNum].rank = "判定中";
-                          }
-                      }
 
                             
 
