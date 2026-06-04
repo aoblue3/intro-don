@@ -798,8 +798,11 @@ window.onYouTubeIframeAPIReady = () => {
                 if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
 
                 player.unMute();
+                if (!isFirstPlayOfRound) {
+                    // 2回目以降の再生はseekToで位置を合わせてから再生
+                    player.seekTo(quizInfo.startTimeOffset || 0, true);
+                }
                 player.playVideo(); 
-                player.seekTo(quizInfo.startTimeOffset || 0, true); 
                 const correction = 100; 
                 const duration = Math.max(0, (sig.value * 1000) - correction);
                 window.quizTimer = setTimeout(() => { 
@@ -809,7 +812,7 @@ window.onYouTubeIframeAPIReady = () => {
                     if (window.quizCountdownInterval) clearInterval(window.quizCountdownInterval);
                 }, duration);
                 isFirstPlayOfRound = false;
-
+ 
                 if (quizInfo.isQuizMode) {
                     document.getElementById('video-cover').style.display = "none";
                     document.getElementById('player').style.opacity = "1";
