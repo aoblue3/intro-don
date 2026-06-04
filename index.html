@@ -797,11 +797,11 @@ window.onYouTubeIframeAPIReady = () => {
                 if (window.quizCountdownInterval) clearInterval(window.quizCountdownInterval);
                 if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
  
+                if (window.quizTimer) { clearTimeout(window.quizTimer); window.quizTimer = null; }
                 player.unMute();
                 // playVideoAt()で指定秒数から直接再生することで、先頭→シークの工程をなくす
                 player.playVideoAt(quizInfo.startTimeOffset || 0); 
-                const correction = 100; 
-                const duration = Math.max(0, (sig.value * 1000) - correction);
+                const duration = sig.value * 1000;
                 window.quizTimer = setTimeout(() => { 
                     player.pauseVideo(); 
                     document.getElementById('quiz-timer-display').style.display = "none";
