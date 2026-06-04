@@ -792,17 +792,14 @@ window.onYouTubeIframeAPIReady = () => {
                 document.getElementById('countdown-container').style.display = "none";
                 document.getElementById('play-sec-preview').style.display = "none";
                 document.getElementById('quiz-start-overlay').style.display = "none";
-
+ 
                 if (window.quizTimer) clearTimeout(window.quizTimer);
                 if (window.quizCountdownInterval) clearInterval(window.quizCountdownInterval);
                 if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
-
+ 
                 player.unMute();
-                if (!isFirstPlayOfRound) {
-                    // 2回目以降の再生はseekToで位置を合わせてから再生
-                    player.seekTo(quizInfo.startTimeOffset || 0, true);
-                }
-                player.playVideo(); 
+                // playVideoAt()で指定秒数から直接再生することで、先頭→シークの工程をなくす
+                player.playVideoAt(quizInfo.startTimeOffset || 0); 
                 const correction = 100; 
                 const duration = Math.max(0, (sig.value * 1000) - correction);
                 window.quizTimer = setTimeout(() => { 
