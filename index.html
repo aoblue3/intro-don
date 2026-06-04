@@ -797,11 +797,11 @@ window.onYouTubeIframeAPIReady = () => {
                 if (window.quizCountdownInterval) clearInterval(window.quizCountdownInterval);
                 if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
  
-                if (window.quizTimer) { clearTimeout(window.quizTimer); window.quizTimer = null; }
                 player.unMute();
                 // playVideoAt()で指定秒数から直接再生することで、先頭→シークの工程をなくす
                 player.playVideoAt(quizInfo.startTimeOffset || 0); 
-                const duration = sig.value * 1000;
+                const correction = 100; 
+                const duration = Math.max(0, (sig.value * 1000) - correction);
                 window.quizTimer = setTimeout(() => { 
                     player.pauseVideo(); 
                     document.getElementById('quiz-timer-display').style.display = "none";
@@ -1528,7 +1528,7 @@ window.onYouTubeIframeAPIReady = () => {
         // --- 修正箇所：ボタンから明示的に true が渡されない限り、絶対に勝手にランダムにならないようガード ---
         const checkRandom = (isRandom === true) ? true : false;
         
-        const area = document.getElementById('reserve-area'), lines = area.value.trim().split('\n');
+        const area = document.getElementById('reserve-area'), lines = area.value.trim().split('\n').map(l => l.trim()).filter(l => l.length > 0);
         if(!lines[0]) return alert("予約リストが空です");
         const choiceArea = document.getElementById('choice-container');
         if (choiceArea) choiceArea.style.display = 'none';
