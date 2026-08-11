@@ -1350,7 +1350,8 @@ window.onYouTubeIframeAPIReady = () => {
 
                 if (!quizInfo.isChoiceMode) {
                     if (addedPoints > 0) {
-                        showCenterNotify(`正解！+${addedPoints}pt(合計${totalInThisRound}pt)`, "var(--success-green)");
+                        const extraTag = isExtra ? "⭐エクストラワード正解！ " : "";
+                        showCenterNotify(`${extraTag}正解！+${addedPoints}pt(合計${totalInThisRound}pt)`, isExtra ? "var(--gold)" : "var(--success-green)");
                     } else {
                         showCenterNotify(`正解！（時間切れ 0pt）`, "var(--gray)");
                     }
@@ -1358,7 +1359,8 @@ window.onYouTubeIframeAPIReady = () => {
                 // --- 修正箇所：選択肢クリックからの正解時は、左下非表示・モザイク維持・タイトル消去防止 ---
                 if (!quizInfo.isFromChoiceClick) {
                     if (addedPoints > 0) {
-                        showNotice(`正解！ ${text} +${addedPoints}pt(合計${totalInThisRound}pt)`, "var(--success-green)");
+                        const extraTag = isExtra ? "⭐エクストラワード正解！ " : "";
+                        showNotice(`${extraTag}正解！ ${text} +${addedPoints}pt(合計${totalInThisRound}pt)`, isExtra ? "var(--gold)" : "var(--success-green)");
                     } else {
                         showNotice(`正解！ ${text} (時間切れ 0pt)`, "var(--gray)");
                     }
