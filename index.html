@@ -1449,7 +1449,9 @@ window.onYouTubeIframeAPIReady = () => {
                 }
                 return 1 - d[l1][l2] / Math.max(l1, l2);
             };
-            const isNear = [...titleCandidates, ...artistCandidates].some(c => c !== "" && getSim(c, normIn) >= 0.7);
+            // ★修正：エクストラワードも「おしい」判定の対象に含める（近い回答が他参加者に丸見えにならないようにする）
+            const extraWordCandidate = (!quizInfo.isQuizMode && quizInfo.extraWord) ? clean(quizInfo.extraWord) : "";
+            const isNear = [...titleCandidates, ...artistCandidates, extraWordCandidate].some(c => c !== "" && getSim(c, normIn) >= 0.7);
             if (isNear) {
                 showNotice("おしい！", "#ffa500");
                 pushChat(text, false, false, true); 
