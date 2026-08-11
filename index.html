@@ -1592,6 +1592,12 @@ window.onYouTubeIframeAPIReady = () => {
         let qText = ""; 
         let aText = parts[1] || ""; 
         let artText = parts[2] || "";
+        // ★追加：アーティスト欄に「かかか@@えええ」のように@@ワードが直接くっついている形式にも対応
+        if (artText.includes('@@')) {
+            const atIdx = artText.indexOf('@@');
+            extraWord = artText.substring(atIdx + 2).trim();
+            artText = artText.substring(0, atIdx).trim();
+        }
         let choices = [];
 
         const p1 = parts[1] || "";
