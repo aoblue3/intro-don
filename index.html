@@ -551,7 +551,7 @@
     let quizInfo = { title: "", artist: "", round: 0, isQuizMode: false, isMosaicMode: false, questionText: "", startTimeOffset: 0, volumeRatio: 1.0 };
     let hasPointedTitle = false, hasPointedArtist = false, isRevealedGlobal = false;
     let roundPointsEarned = 0;
-    let lastVolume = 50, isMuted = false, currentRankingVisible = false;
+    let lastVolume = 50, isMuted = false, currentRankingVisible = false, currentFinalResultsVisible = false;
     let lastVideoId = ""; 
     let isFirstPlayOfRound = true;
 
@@ -1125,7 +1125,12 @@ window.onYouTubeIframeAPIReady = () => {
                 const panel = document.getElementById('fastest-ranking');
                 if(sig.value) { renderRanking(); panel.style.display = "block"; } else { panel.style.display = "none"; }
             } else if(sig.type === 'show_final_results') {
-                if (typeof renderFinalResults === 'function') renderFinalResults();
+                const panel = document.getElementById('final-results');
+                if (sig.value) {
+                    if (typeof renderFinalResults === 'function') renderFinalResults();
+                } else {
+                    if (panel) { panel.style.display = "none"; panel.classList.remove('champion-glow-active'); }
+                }
             } else if(sig.type === 'show_video') {
                 const playerEl = document.getElementById('player');
                 document.getElementById('video-cover').style.display = sig.value ? "none" : "flex";
@@ -2296,7 +2301,10 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         document.getElementById('btn-video-off').onclick = () => sendSignal('show_video', false);
         document.getElementById('btn-reset-all').onclick = resetRoomData;
         document.getElementById('btn-export-log').onclick = exportFullLog;
-        document.getElementById('btn-final-results').onclick = () => sendSignal('show_final_results', true);
+        document.getElementById('btn-final-results').onclick = () => {
+            currentFinalResultsVisible = !currentFinalResultsVisible;
+            sendSignal('show_final_results', currentFinalResultsVisible);
+        };
         
         // ★修正：次の曲に進むボタンが押された時、早解きランキングが非表示（または存在しない）状態なら警告を出す
         document.getElementById('btn-next-quiz').onclick = () => {
