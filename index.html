@@ -337,6 +337,7 @@
                 <span id="volume-val" style="font-size:12px; min-width:20px;">50</span>
             </div>
             <span id="voice-mic-status" style="font-size:11px; color:#0f0; margin: 0 5px; display:none;">🎙️主催者接続中</span>
+            <button id="voice-enable-btn" style="display:none; background:var(--gold); color:#000; border:none; border-radius:15px; padding:6px 12px; cursor:pointer; font-weight:bold; margin: 0 5px;">🔊 音声を有効にする</button>
             <span id="voice-mute-btn" style="cursor:pointer; display:none; margin: 0 5px;" title="主催者音声のミュート切替">🔊</span>
             <audio id="host-voice-audio" autoplay playsinline></audio>
         </div>
@@ -2248,6 +2249,8 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         document.getElementById('btn-voice-toggle').innerText = "🎤 音声配信停止";
         document.getElementById('btn-voice-toggle').style.background = "#e91e63";
         document.getElementById('voice-status').innerText = "配信中...";
+        // ★追加：参加者側に配信中であることを伝えるフラグ
+        await set(ref(db, 'game/webrtc/broadcasting'), true);
 
         // 現在オンラインの参加者全員に接続
         const usersSnap = await get(ref(db, 'game/users'));
@@ -2274,8 +2277,11 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         document.getElementById('btn-voice-toggle').innerText = "🎤 音声配信開始";
         document.getElementById('btn-voice-toggle').style.background = "#9c27b0";
         document.getElementById('voice-status').innerText = "";
-        // Firebase上の接続情報を掃除
-        try { await remove(ref(db, 'game/webrtc')); } catch(e) {}
+        // ★追加：参加者側に配信終了を伝えてから、接続情報を掃除する
+        try { await set(ref(db, 'game/webrtc/broadcasting'), false); } catch(e) {}
+        try { await remove(ref(db, 'game/webrtc/offers')); } catch(e) {}
+        try { await remove(ref(db, 'game/webrtc/answers')); } catch(e) {}
+        try { await remove(ref(db, 'game/webrtc/ice')); } catch(e) {}
     }
 
     // --- 主催者側：配信中に新しく参加者がオンラインになったら自動接続 ---
@@ -2292,6 +2298,26 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
     // --- 参加者側：主催者からのoffer受信を待ち受け、応答する ---
     function listenForHostVoice() {
         if (!myId || isAdmin) return;
+
+        // ★追加：主催者の配信状態フラグを監視し、停止したら表示・接続を確実にリセットする
+        onValue(ref(db, 'game/webrtc/broadcasting'), (snap) => {
+            const isLive = snap.val() === true;
+            if (!isLive) {
+                const statusEl = document.getElementById('voice-mic-status');
+                const muteBtnEl = document.getElementById('voice-mute-btn');
+                const enableBtnEl = document.getElementById('voice-enable-btn');
+                if (statusEl) statusEl.style.display = "none";
+                if (muteBtnEl) muteBtnEl.style.display = "none";
+                if (enableBtnEl) enableBtnEl.style.display = "none";
+                if (participantPeerConnection) {
+                    try { participantPeerConnection.close(); } catch (e) {}
+                    participantPeerConnection = null;
+                }
+                const audioEl = document.getElementById('host-voice-audio');
+                if (audioEl) audioEl.srcObject = null;
+            }
+        });
+
         onValue(ref(db, `game/webrtc/offers/${myId}`), async (snap) => {
             const offer = snap.val();
             if (!offer || participantPeerConnection) return; // 既に接続済みなら無視
@@ -2304,7 +2330,11 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                     const audioEl = document.getElementById('host-voice-audio');
                     if (audioEl) {
                         audioEl.srcObject = event.streams[0];
-                        audioEl.play().catch(() => {});
+                        audioEl.play().catch(() => {
+                            // ★自動再生がブラウザにブロックされた場合、参加者に手動で有効化してもらうボタンを表示
+                            const enableBtn = document.getElementById('voice-enable-btn');
+                            if (enableBtn) enableBtn.style.display = "inline-block";
+                        });
                     }
                     const statusEl = document.getElementById('voice-mic-status');
                     const muteBtnEl = document.getElementById('voice-mute-btn');
@@ -2355,6 +2385,18 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
             voiceToggleBtn.onclick = () => {
                 if (isVoiceBroadcasting) stopVoiceBroadcast();
                 else startVoiceBroadcast();
+            };
+        }
+        // ★追加：自動再生がブロックされた時の「有効にする」ボタン
+        const voiceEnableBtn = document.getElementById('voice-enable-btn');
+        if (voiceEnableBtn) {
+            voiceEnableBtn.onclick = () => {
+                const audioEl = document.getElementById('host-voice-audio');
+                if (audioEl) {
+                    audioEl.play().then(() => {
+                        voiceEnableBtn.style.display = "none";
+                    }).catch(() => {});
+                }
             };
         }
     });
