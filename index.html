@@ -233,6 +233,7 @@
          <button class="admin-btn" id="btn-reset-all" style="background:#444">全リセット</button>
         ｜ <button class="admin-btn" id="btn-voice-toggle" style="background:#9c27b0">🎤 音声配信開始</button>
         <span id="voice-status" style="color:#0f0; font-size:11px; margin-left:5px;"></span>
+        ｜ <button class="admin-btn" id="btn-export-log" style="background:#17a2b8">📄 全ログ出力</button>
         ｜ <input type="range" id="admin-seekbar" min="0" max="100" value="0">
         <span id="admin-time-display" style="color:#0f0; font-size:12px; font-family:monospace; min-width:35px;">0:00</span>
     </div>
@@ -1823,6 +1824,83 @@ window.loadRandomFromReserve = loadRandomFromReserve; // 👈 この1行を足�
         } catch (e) { alert("エラー"); }
     };
 
+    /**
+     * ★追加：全参加者の正解履歴を1つのテキストファイルとして出力する
+     * 既存の「参加者クリックで個別履歴を見る」ロジックと同じ集計方式を、全員分まとめて行う
+     */
+    const exportFullLog = async () => {
+        if (!isAdmin) return;
+        try {
+            const [usersSnap, hSnap] = await Promise.all([
+                get(ref(db, 'game/users')),
+                get(ref(db, 'game/history'))
+            ]);
+
+            if (!usersSnap.exists()) { alert("参加者データがありません"); return; }
+
+            // 全ラウンドの履歴データを { round: { userId: {...} } } の形で保持
+            const historyByRound = {};
+            if (hSnap.exists()) {
+                hSnap.forEach(roundSnap => {
+                    historyByRound[Number(roundSnap.key)] = roundSnap.val() || {};
+                });
+            }
+            const sortedRoundNums = Object.keys(historyByRound).map(Number).sort((a, b) => a - b);
+
+            const usersData = usersSnap.val();
+            // 参加日時順に並べる（既存の参加者リストと同じ並び方に寄せる）
+            const userList = Object.values(usersData).filter(u => u && u.name && !u.isAdmin);
+            userList.sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0));
+
+            const now = new Date();
+            const dateStr = `${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()} ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+            let output = `===== INTRO DON! 大会結果ログ (出力日時: ${dateStr}) =====\n`;
+            output += `参加人数: ${userList.length}人 / 総ラウンド数: ${sortedRoundNums.length}問\n\n`;
+
+            userList.forEach(u => {
+                let total1st = 0, total2nd = 0, total3rd = 0;
+                let roundLines = "";
+                let participatedCount = 0;
+
+                sortedRoundNums.forEach(rNum => {
+                    const entry = historyByRound[rNum] ? historyByRound[rNum][u.id] : null;
+                    if (!entry) return;
+                    participatedCount++;
+                    const pts = entry.ptsDisplay || "0pt";
+                    let rankText = "圏外";
+                    const rVal = entry.rank;
+                    if (rVal === 1) { rankText = "1位"; total1st++; }
+                    else if (rVal === 2) { rankText = "2位"; total2nd++; }
+                    else if (rVal === 3) { rankText = "3位"; total3rd++; }
+                    else if (typeof rVal === 'string') { rankText = rVal; }
+                    roundLines += ` ・第${rNum}問: ${pts} 獲得 [早解き: ${rankText}]\n`;
+                });
+
+                output += `【${u.name}】（最終スコア: ${u.score || 0}pt）\n`;
+                output += `■ 通算参加数: ${participatedCount}問\n`;
+                output += `■ 通算早解きトップ3獲得回数: 1位:${total1st}回 / 2位:${total2nd}回 / 3位:${total3rd}回\n`;
+                output += `■ 各ラウンドの明細:\n`;
+                output += (roundLines || " ・参加履歴なし\n");
+                output += `\n`;
+            });
+
+            // ダウンロード実行
+            const blob = new Blob([output], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `introdon_log_${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            console.error("ログ出力エラー:", e);
+            alert("ログ出力中にエラーが発生しました");
+        }
+    };
+
 async function renderRanking() {
         const [chatSnap, timeSnap] = await Promise.all([get(ref(db, 'game/chats')), get(ref(db, 'game/signal_time'))]);
         const startTime = timeSnap.val() || 0;
@@ -1997,6 +2075,7 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         document.getElementById('btn-video-on').onclick = () => sendSignal('show_video', true);
         document.getElementById('btn-video-off').onclick = () => sendSignal('show_video', false);
         document.getElementById('btn-reset-all').onclick = resetRoomData;
+        document.getElementById('btn-export-log').onclick = exportFullLog;
         
         // ★修正：次の曲に進むボタンが押された時、早解きランキングが非表示（または存在しない）状態なら警告を出す
         document.getElementById('btn-next-quiz').onclick = () => {
