@@ -339,6 +339,8 @@
             <span id="voice-mic-status" style="font-size:11px; color:#0f0; margin: 0 5px; display:none;">🎙️主催者接続中</span>
             <button id="voice-enable-btn" style="display:none; background:var(--gold); color:#000; border:none; border-radius:15px; padding:6px 12px; cursor:pointer; font-weight:bold; margin: 0 5px;">🔊 音声を有効にする</button>
             <span id="voice-mute-btn" style="cursor:pointer; display:none; margin: 0 5px;" title="主催者音声のミュート切替">🔊</span>
+            <input type="range" id="voice-volume-slider" min="0" max="500" value="300" style="display:none; width:70px; vertical-align:middle;" title="主催者音声の音量">
+            <span id="voice-volume-val" style="font-size:11px; min-width:32px; display:none;">300%</span>
             <audio id="host-voice-audio" autoplay playsinline></audio>
         </div>
     </div>
@@ -2319,9 +2321,13 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                 const statusEl = document.getElementById('voice-mic-status');
                 const muteBtnEl = document.getElementById('voice-mute-btn');
                 const enableBtnEl = document.getElementById('voice-enable-btn');
+                const volSliderEl = document.getElementById('voice-volume-slider');
+                const volValEl = document.getElementById('voice-volume-val');
                 if (statusEl) statusEl.style.display = "none";
                 if (muteBtnEl) muteBtnEl.style.display = "none";
                 if (enableBtnEl) enableBtnEl.style.display = "none";
+                if (volSliderEl) volSliderEl.style.display = "none";
+                if (volValEl) volValEl.style.display = "none";
                 if (participantPeerConnection) {
                     try { participantPeerConnection.close(); } catch (e) {}
                     participantPeerConnection = null;
@@ -2360,7 +2366,9 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                         if (!voiceAudioContext) voiceAudioContext = new (window.AudioContext || window.webkitAudioContext)();
                         const source = voiceAudioContext.createMediaStreamSource(event.streams[0]);
                         voiceGainNode = voiceAudioContext.createGain();
-                        voiceGainNode.gain.value = 3.0; // 300%まで増幅
+                        // ★修正：音量スライダーの現在値を初期ゲインとして使う
+                        const volSlider = document.getElementById('voice-volume-slider');
+                        voiceGainNode.gain.value = volSlider ? (Number(volSlider.value) / 100) : 3.0;
                         source.connect(voiceGainNode).connect(voiceAudioContext.destination);
                         if (voiceAudioContext.state === 'suspended') {
                             const enableBtn = document.getElementById('voice-enable-btn');
@@ -2369,6 +2377,11 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                     } catch (e) {
                         console.error('[Voice/参加者] 音量ブースト初期化エラー:', e);
                     }
+                    // ★追加：音量スライダーを表示する
+                    const volSliderEl = document.getElementById('voice-volume-slider');
+                    const volValEl = document.getElementById('voice-volume-val');
+                    if (volSliderEl) volSliderEl.style.display = "inline-block";
+                    if (volValEl) volValEl.style.display = "inline";
                     const statusEl = document.getElementById('voice-mic-status');
                     const muteBtnEl = document.getElementById('voice-mute-btn');
                     if (statusEl) statusEl.style.display = "inline";
@@ -2405,12 +2418,25 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
     let isVoiceMuted = false;
     document.addEventListener('DOMContentLoaded', () => {
         const voiceMuteBtn = document.getElementById('voice-mute-btn');
+        const voiceVolumeSlider = document.getElementById('voice-volume-slider');
+        const voiceVolumeVal = document.getElementById('voice-volume-val');
         if (voiceMuteBtn) {
             voiceMuteBtn.onclick = () => {
                 isVoiceMuted = !isVoiceMuted;
-                // ★修正：音声はGainNode経由で出力しているので、GainNodeの音量を切り替える
-                if (voiceGainNode) voiceGainNode.gain.value = isVoiceMuted ? 0 : 3.0;
+                // ★修正：音声はGainNode経由で出力しているので、GainNodeの音量を切り替える（解除時はスライダーの値に戻す）
+                if (voiceGainNode) {
+                    voiceGainNode.gain.value = isVoiceMuted ? 0 : (voiceVolumeSlider ? Number(voiceVolumeSlider.value) / 100 : 3.0);
+                }
                 voiceMuteBtn.innerText = isVoiceMuted ? "🔇" : "🔊";
+            };
+        }
+        // ★追加：主催者音声の音量スライダー操作
+        if (voiceVolumeSlider) {
+            voiceVolumeSlider.oninput = () => {
+                if (voiceVolumeVal) voiceVolumeVal.innerText = `${voiceVolumeSlider.value}%`;
+                if (voiceGainNode && !isVoiceMuted) {
+                    voiceGainNode.gain.value = Number(voiceVolumeSlider.value) / 100;
+                }
             };
         }
         const voiceToggleBtn = document.getElementById('btn-voice-toggle');
