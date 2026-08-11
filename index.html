@@ -1213,7 +1213,7 @@ window.onYouTubeIframeAPIReady = () => {
         }
     };
     // --- 1. 得点計算とチャット送信の共通ロジック (これを独立させる) ---
-    const processScore = (text, isTitle, isArtist) => {
+    const processScore = (text, isTitle, isArtist, isExtra = false) => {
         // ★追加ガード：入室から2秒以内は、過去のデータの「残響」による誤動作を防ぐ
         if (typeof pageJoinTime !== 'undefined' && Date.now() - pageJoinTime < 2000) {
             return;
@@ -1255,8 +1255,6 @@ window.onYouTubeIframeAPIReady = () => {
 
         // 正解時の処理
         if (isTitle && !hasPointedTitle) {
-            // 【修正箇所①】アーティスト先当て時も曲名が通るよう、曲名での重複判定のみに修正
-            if (hasPointedTitle) return;
 
             let currentSeconds = 0;
             let isTimeUp = false; // ★タイムアップしているかどうかの目印
@@ -1294,6 +1292,11 @@ window.onYouTubeIframeAPIReady = () => {
                 if (window.is1stPointAwarded) addedPoints = Math.min(addedPoints, 15);
             }
 
+            // ★修正：エクストラワード正解時は、通常の時間帯別ポイントに+5ptを追加する
+            if (isExtra && addedPoints > 0) {
+                addedPoints += 5;
+            }
+
             if (addedPoints >= 0) {
                 const totalInThisRound = roundPointsEarned + addedPoints;
 
@@ -1324,7 +1327,8 @@ window.onYouTubeIframeAPIReady = () => {
                     // クイズモード ＝ 今回の秒数(addedPoints)
                     // イントロモード ＝ アーティスト点も含めたこのラウンドの総得点(totalInThisRound)
                     let myBase = quizInfo.isQuizMode ? addedPoints : totalInThisRound;
-                    const displayPtsText = `${myBase}pt`;
+                    // ★追加：エクストラワード正解の場合、履歴で分かるように印を付ける
+                    const displayPtsText = isExtra ? `${myBase}pt(ワード正解)` : `${myBase}pt`;
 
                     // --- 1. 個人の更新 ---
                     update(ref(db, `game/users/${myId}`), { 
@@ -1368,7 +1372,6 @@ window.onYouTubeIframeAPIReady = () => {
                 //roundPointsEarned += addedPoints;
             }
         } else if (!quizInfo.isQuizMode && isArtist && !hasPointedArtist && !hasPointedTitle) {
-            if (hasPointedArtist) return;
 
             const addedPoints = Math.max(0, artistPoints - roundPointsEarned);
             if (addedPoints > 0) {
@@ -1414,7 +1417,9 @@ window.onYouTubeIframeAPIReady = () => {
         const normIn = clean(text);
         const titleCandidates = quizInfo.title.split('.').map(c => clean(c));
         const artistCandidates = quizInfo.artist.split('.').map(c => clean(c));
-        const isTitle = titleCandidates.some(c => c !== "" && c === normIn);
+        // ★追加：エクストラワードとの完全一致判定（イントロモードのみ）
+        const isExtraWordMatch = (!quizInfo.isQuizMode && quizInfo.extraWord && clean(quizInfo.extraWord) === normIn);
+        const isTitle = titleCandidates.some(c => c !== "" && c === normIn) || isExtraWordMatch;
         const isArtist = artistCandidates.some(c => c !== "" && c === normIn);
 
         // おしい判定
@@ -1439,7 +1444,7 @@ window.onYouTubeIframeAPIReady = () => {
             }
         }
 
-        processScore(text, isTitle, isArtist);
+        processScore(text, isTitle, isArtist, isExtraWordMatch);
         input.value = "";
     };
 
@@ -1559,6 +1564,12 @@ window.onYouTubeIframeAPIReady = () => {
         if(!vid || vid.length !== 11) return alert("有効なURL/IDではありません");
         let volumeRatio = 1.0; const lastPart = parts[parts.length - 1];
         if (!isNaN(lastPart) && (lastPart.includes('.') || !isNaN(parseFloat(lastPart)))) volumeRatio = parseFloat(parts.pop());
+        // ★追加：末尾が @@ワード の場合、エクストラポイント対象ワードとして抜き取る
+        let extraWord = "";
+        const lastPartAfterVolume = parts[parts.length - 1];
+        if (lastPartAfterVolume && lastPartAfterVolume.startsWith('@@')) {
+            extraWord = parts.pop().substring(2).trim();
+        }
         const usersSnap = await get(ref(db, 'game/users'));
         if (usersSnap.exists()) {
             const updates = {};
@@ -1650,7 +1661,8 @@ window.onYouTubeIframeAPIReady = () => {
             isClosed: keepClosed,
             // ★超重要：次のラウンドに進むこの瞬間に、そのラウンドが「クイズモード（選択肢含む）」なのか「イントロモード」なのかの
             // 決定的なフラグを、過去の履歴が壊されないための防衛策として、設定データ（settings）の中に正しく刻み込んで送信します。
-            isQuizModeRound: (isQuiz || isChoice) ? true : false
+            isQuizModeRound: (isQuiz || isChoice) ? true : false,
+            extraWord: extraWord // ★追加：エクストラポイント対象ワード（イントロモードのみ判定で使用）
         });
         // --- 修正箇所ここまで ---
         // --- 修正箇所（Firebaseへの設定送信）ここまで ---
@@ -1792,7 +1804,10 @@ async function renderRanking() {
                     const existingEntry = preloadedHistory[target.userId];
                     const base = existingEntry ? (existingEntry.ptsRaw || 0) : 0;
                     const newPts = base + bonus;
-                    const newDisplay = base > 0 ? `${base}pt (+${bonus}pt)` : `0pt`;
+                    // ★追加：エクストラワード正解の印を引き継ぐ
+                    const wasExtra = existingEntry && existingEntry.ptsDisplay && existingEntry.ptsDisplay.includes("(ワード正解)");
+                    const extraMark = wasExtra ? "(ワード正解)" : "";
+                    const newDisplay = base > 0 ? `${base}pt (+${bonus}pt)${extraMark}` : `0pt`;
                     set(ref(db, `game/history/${quizInfo.round}/${target.userId}`), { ptsDisplay: newDisplay, ptsRaw: newPts, rank: rankNum });
                 }
             }
