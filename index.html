@@ -116,6 +116,30 @@
 
         @keyframes winner-pulse { 0% { box-shadow: 0 0 10px var(--gold); } 50% { box-shadow: 0 0 40px var(--gold); } 100% { box-shadow: 0 0 10px var(--gold); } }
         .winner-anim { animation: winner-pulse 1s infinite; }
+
+        /* ★追加：1位確定時の紙吹雪演出 */
+        .confetti-piece {
+            position: fixed; top: -20px; width: 8px; height: 14px; z-index: 100000; pointer-events: none;
+            animation: confetti-fall linear forwards;
+        }
+        @keyframes confetti-fall {
+            0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+            100% { transform: translateY(110vh) rotate(720deg); opacity: 0; }
+        }
+
+        /* ★追加：リアクション絵文字の演出 */
+        .reaction-bubble {
+            position: absolute; bottom: 80px; font-size: 2.8rem; z-index: 9999; pointer-events: none;
+            animation: reaction-rise 2.5s ease-out forwards; text-shadow: 0 0 10px rgba(0,0,0,0.6);
+        }
+        @keyframes reaction-rise {
+            0% { transform: translateY(0) scale(0.5); opacity: 0; }
+            15% { opacity: 1; transform: translateY(-20px) scale(1.2); }
+            100% { transform: translateY(-320px) scale(1); opacity: 0; }
+        }
+        #reaction-bar { display: flex; gap: 4px; margin: 0 5px; }
+        .reaction-btn { background: #333; border: none; border-radius: 50%; width: 34px; height: 34px; font-size: 16px; cursor: pointer; }
+        .reaction-btn:hover { background: #555; }
         #sidebar { flex: 2; background: #1a1a1a; border-left: 1px solid #333; display: flex; flex-direction: column; min-width: 250px; }
         #user-list { flex: 1; padding: 10px; overflow-y: auto; }
         .user-card { display: flex; align-items: center; justify-content: space-between; background: #2a2a2a; padding: 10px 15px; border-radius: 8px; margin-bottom: 6px; font-size: 14px; }
@@ -331,6 +355,13 @@
             <button id="fullscreen-btn" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">全画面</button>
             <button id="pass-btn" onclick="sendPassSignal()" style="background:#888; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">パス</button>
             <button id="my-history-btn" onclick="showMyHistory()" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">履歴</button>
+            <div id="reaction-bar">
+                <button class="reaction-btn" onclick="sendReaction('🔥')">🔥</button>
+                <button class="reaction-btn" onclick="sendReaction('😭')">😭</button>
+                <button class="reaction-btn" onclick="sendReaction('👏')">👏</button>
+                <button class="reaction-btn" onclick="sendReaction('🤔')">🤔</button>
+                <button class="reaction-btn" onclick="sendReaction('💦')">💦</button>
+            </div>
             <button id="exit-game-btn" onclick="exitGame()" style="background:#dc3545; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">退出</button>
             <div class="volume-controls">
                 <span id="mute-btn" style="cursor:pointer;">🔈</span>
@@ -1203,6 +1234,17 @@ window.onYouTubeIframeAPIReady = () => {
             const now = Date.now();
             if (m.time && (now - m.time < 3000)) { window.lastProcessedChatKey = key; showDanmaku(m); }
         });
+
+        // ★追加：リアクション絵文字の受信
+        onValue(query(ref(db, 'game/reactions'), limitToLast(1)), (snap) => {
+            if (!snap.exists()) return;
+            const data = snap.val();
+            const key = Object.keys(data)[0];
+            const m = data[key];
+            if (window.lastProcessedReactionKey === key) return;
+            const now = Date.now();
+            if (m.time && (now - m.time < 3000)) { window.lastProcessedReactionKey = key; showReactionBurst(m); }
+        });
     }
 
     function normalize(t) { return t ? t.normalize("NFKC").replace(/[！!？?。．、，\s]/g, "").replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60)).toLowerCase() : ""; }
@@ -1542,6 +1584,36 @@ window.onYouTubeIframeAPIReady = () => {
         setTimeout(() => div.remove(), 4000);
     };
 
+    // ★追加：1位確定時の紙吹雪演出
+    function triggerConfetti() {
+        const colors = ['#ffd700', '#ff4757', '#28a745', '#007bff', '#ff6b9d', '#9c27b0', '#fff'];
+        for (let i = 0; i < 60; i++) {
+            const piece = document.createElement('div');
+            piece.className = 'confetti-piece';
+            piece.style.left = (Math.random() * 100) + 'vw';
+            piece.style.background = colors[Math.floor(Math.random() * colors.length)];
+            piece.style.animationDuration = (2 + Math.random() * 1.5) + 's';
+            piece.style.animationDelay = (Math.random() * 0.3) + 's';
+            document.body.appendChild(piece);
+            setTimeout(() => piece.remove(), 4000);
+        }
+    }
+
+    // ★追加：リアクション絵文字を送信する（採点には一切関与しない、盛り上げ用のコメント機能）
+    window.sendReaction = (emoji) => {
+        push(ref(db, 'game/reactions'), { user: myName, emoji, time: serverTimestamp() });
+    };
+
+    // ★追加：受信したリアクションを画面に浮かせて表示する
+    const showReactionBurst = (m) => {
+        const div = document.createElement('div');
+        div.className = 'reaction-bubble';
+        div.innerText = m.emoji;
+        div.style.left = (Math.random() * 70 + 15) + '%';
+        document.getElementById('screen-chat-overlay').appendChild(div);
+        setTimeout(() => div.remove(), 2600);
+    };
+
     const sendSignal = (type, value) => set(ref(db, 'game/signal'), { type, value, time: Date.now() });
 
     const loadNextFromReserve = async (isRandom = false) => {
@@ -1812,6 +1884,10 @@ async function renderRanking() {
             
             await new Promise(r => setTimeout(r, delay)); 
             target.el.classList.add('show'); 
+            // ★追加：1位が表示された瞬間、全員の画面に紙吹雪を出す
+            if (target.rankIndex === 0 && typeof triggerConfetti === 'function') {
+                triggerConfetti();
+            }
             
             // ★修正：1位、2位、3位のポイント加算処理（1位: 5pt / 2位: 3pt / 3位: 2pt）
             if (isAdmin && !window.is1stPointAwarded) {
