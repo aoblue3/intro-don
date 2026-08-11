@@ -2204,6 +2204,10 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
             const pc = new RTCPeerConnection(RTC_CONFIG);
             hostPeerConnections[participantId] = pc;
 
+            // ★追加：接続状態をコンソールに出す（診断用）
+            pc.oniceconnectionstatechange = () => console.log(`[Voice/Host→${participantId}] ICE状態:`, pc.iceConnectionState);
+            pc.onconnectionstatechange = () => console.log(`[Voice/Host→${participantId}] 接続状態:`, pc.connectionState);
+
             hostMicStream.getTracks().forEach(track => pc.addTrack(track, hostMicStream));
 
             pc.onicecandidate = (event) => {
@@ -2320,11 +2324,16 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
 
         onValue(ref(db, `game/webrtc/offers/${myId}`), async (snap) => {
             const offer = snap.val();
+            console.log('[Voice/参加者] offer受信:', offer ? 'あり' : 'なし', ' 既存接続:', !!participantPeerConnection);
             if (!offer || participantPeerConnection) return; // 既に接続済みなら無視
 
             try {
                 const pc = new RTCPeerConnection(RTC_CONFIG);
                 participantPeerConnection = pc;
+
+                // ★追加：接続状態をコンソールに出す（診断用）
+                pc.oniceconnectionstatechange = () => console.log('[Voice/参加者] ICE状態:', pc.iceConnectionState);
+                pc.onconnectionstatechange = () => console.log('[Voice/参加者] 接続状態:', pc.connectionState);
 
                 pc.ontrack = (event) => {
                     const audioEl = document.getElementById('host-voice-audio');
