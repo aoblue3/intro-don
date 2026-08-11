@@ -1715,9 +1715,9 @@ window.onYouTubeIframeAPIReady = () => {
     // ★追加：リアクション絵文字を送信する（採点には一切関与しない、盛り上げ用のコメント機能）
     let lastReactionTime = 0;
     window.sendReaction = (emoji) => {
-        // ★追加：連打対策として0.1秒のクールタイムを設ける
+        // ★修正：連打対策として0.3秒のクールタイムを設ける
         const now = Date.now();
-        if (now - lastReactionTime < 100) return;
+        if (now - lastReactionTime < 300) return;
         lastReactionTime = now;
         push(ref(db, 'game/reactions'), { user: myName, emoji, time: serverTimestamp() });
     };
