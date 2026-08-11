@@ -207,6 +207,8 @@
         ｜ <button class="admin-btn" id="btn-open-q-modal" style="background:#555">問題追加</button>
         ｜<button id="admin-kick-all" style="background:#ff4444; color:white; border:none; border-radius:5px; padding:5px 10px; cursor:pointer; margin-left:10px;">全員退出</button>
          <button class="admin-btn" id="btn-reset-all" style="background:#444">全リセット</button>
+        ｜ <button class="admin-btn" id="btn-voice-toggle" style="background:#9c27b0">🎤 音声配信開始</button>
+        <span id="voice-status" style="color:#0f0; font-size:11px; margin-left:5px;"></span>
         ｜ <input type="range" id="admin-seekbar" min="0" max="100" value="0">
         <span id="admin-time-display" style="color:#0f0; font-size:12px; font-family:monospace; min-width:35px;">0:00</span>
     </div>
@@ -334,6 +336,9 @@
                 <input type="range" id="volume-slider" min="0" max="100" value="50">
                 <span id="volume-val" style="font-size:12px; min-width:20px;">50</span>
             </div>
+            <span id="voice-mic-status" style="font-size:11px; color:#0f0; margin: 0 5px; display:none;">🎙️主催者接続中</span>
+            <span id="voice-mute-btn" style="cursor:pointer; display:none; margin: 0 5px;" title="主催者音声のミュート切替">🔊</span>
+            <audio id="host-voice-audio" autoplay playsinline></audio>
         </div>
     </div>
     
@@ -349,7 +354,7 @@
 
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-    import { getDatabase, ref, set, onValue, push, remove, update, increment, query, limitToLast, onDisconnect, get, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+    import { getDatabase, ref, set, onValue, onChildAdded, push, remove, update, increment, query, limitToLast, onDisconnect, get, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
     const firebaseConfig = {
         apiKey: "AIzaSyAWAEgirPeXoqn6b9YATepoudYfN9NGWB8",
@@ -444,6 +449,8 @@
         onDisconnect(userRef).update({ isOnline: false, lastSeen: serverTimestamp() });
         setInterval(() => { if(myId) update(ref(db, `game/users/${myId}`), { lastSeen: serverTimestamp(), isOnline: true }); }, 30000);
         initYouTube();
+        // ★追加：参加者なら、主催者の音声配信の待ち受けを開始する
+        if (!isAdmin && typeof listenForHostVoice === 'function') listenForHostVoice();
     }
 
 // --- YouTube API 初期化 (Firefox安定版) ---
@@ -2173,6 +2180,185 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
             if (event.target === modalContainer) closeModal();
         };
     };
+
+    // ================================================================
+    // ★新機能：主催者マイク音声のリアルタイム配信（WebRTC）
+    // Firebaseは接続情報（SDP/ICE）のやり取りにのみ使用し、音声データ自体は
+    // 主催者と参加者のブラウザ間で直接（P2P）やり取りするため通信量・遅延を抑える
+    // ================================================================
+    const RTC_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+    let isVoiceBroadcasting = false;
+    let hostMicStream = null;
+    let hostPeerConnections = {}; // { participantId: RTCPeerConnection }
+    let hostConnectedParticipants = new Set(); // 既に接続済み/接続処理中の参加者ID
+    let participantPeerConnection = null; // 参加者側の1本だけの接続
+
+    // --- 主催者側：特定の参加者1人への接続を確立する ---
+    async function hostConnectToParticipant(participantId) {
+        if (!isVoiceBroadcasting || !hostMicStream) return;
+        if (hostConnectedParticipants.has(participantId)) return;
+        hostConnectedParticipants.add(participantId);
+
+        try {
+            const pc = new RTCPeerConnection(RTC_CONFIG);
+            hostPeerConnections[participantId] = pc;
+
+            hostMicStream.getTracks().forEach(track => pc.addTrack(track, hostMicStream));
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    push(ref(db, `game/webrtc/ice/host/${participantId}`), event.candidate.toJSON());
+                }
+            };
+
+            // 参加者からのICE candidateを受信（新規追加分だけ処理）
+            onChildAdded(ref(db, `game/webrtc/ice/participant/${participantId}`), (snap) => {
+                const candidate = snap.val();
+                if (candidate && pc.signalingState !== 'closed') {
+                    pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+                }
+            });
+
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            await set(ref(db, `game/webrtc/offers/${participantId}`), { sdp: offer.sdp, type: offer.type });
+
+            // 参加者からのanswerを待つ
+            onValue(ref(db, `game/webrtc/answers/${participantId}`), (snap) => {
+                const answer = snap.val();
+                if (answer && pc.signalingState === 'have-local-offer') {
+                    pc.setRemoteDescription(new RTCSessionDescription(answer)).catch(() => {});
+                }
+            });
+        } catch (e) {
+            console.error("音声接続エラー(主催者側):", e);
+            hostConnectedParticipants.delete(participantId);
+        }
+    }
+
+    // --- 主催者側：配信開始 ---
+    async function startVoiceBroadcast() {
+        try {
+            hostMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (e) {
+            alert("マイクへのアクセスが許可されませんでした。");
+            return;
+        }
+        isVoiceBroadcasting = true;
+        document.getElementById('btn-voice-toggle').innerText = "🎤 音声配信停止";
+        document.getElementById('btn-voice-toggle').style.background = "#e91e63";
+        document.getElementById('voice-status').innerText = "配信中...";
+
+        // 現在オンラインの参加者全員に接続
+        const usersSnap = await get(ref(db, 'game/users'));
+        if (usersSnap.exists()) {
+            usersSnap.forEach(child => {
+                const u = child.val();
+                if (u && u.id && u.id !== myId && u.isOnline) {
+                    hostConnectToParticipant(u.id);
+                }
+            });
+        }
+    }
+
+    // --- 主催者側：配信停止 ---
+    async function stopVoiceBroadcast() {
+        isVoiceBroadcasting = false;
+        if (hostMicStream) {
+            hostMicStream.getTracks().forEach(t => t.stop());
+            hostMicStream = null;
+        }
+        Object.values(hostPeerConnections).forEach(pc => { try { pc.close(); } catch(e){} });
+        hostPeerConnections = {};
+        hostConnectedParticipants.clear();
+        document.getElementById('btn-voice-toggle').innerText = "🎤 音声配信開始";
+        document.getElementById('btn-voice-toggle').style.background = "#9c27b0";
+        document.getElementById('voice-status').innerText = "";
+        // Firebase上の接続情報を掃除
+        try { await remove(ref(db, 'game/webrtc')); } catch(e) {}
+    }
+
+    // --- 主催者側：配信中に新しく参加者がオンラインになったら自動接続 ---
+    onValue(ref(db, 'game/users'), (snap) => {
+        if (!isAdmin || !isVoiceBroadcasting) return;
+        snap.forEach(child => {
+            const u = child.val();
+            if (u && u.id && u.id !== myId && u.isOnline) {
+                hostConnectToParticipant(u.id);
+            }
+        });
+    });
+
+    // --- 参加者側：主催者からのoffer受信を待ち受け、応答する ---
+    function listenForHostVoice() {
+        if (!myId || isAdmin) return;
+        onValue(ref(db, `game/webrtc/offers/${myId}`), async (snap) => {
+            const offer = snap.val();
+            if (!offer || participantPeerConnection) return; // 既に接続済みなら無視
+
+            try {
+                const pc = new RTCPeerConnection(RTC_CONFIG);
+                participantPeerConnection = pc;
+
+                pc.ontrack = (event) => {
+                    const audioEl = document.getElementById('host-voice-audio');
+                    if (audioEl) {
+                        audioEl.srcObject = event.streams[0];
+                        audioEl.play().catch(() => {});
+                    }
+                    const statusEl = document.getElementById('voice-mic-status');
+                    const muteBtnEl = document.getElementById('voice-mute-btn');
+                    if (statusEl) statusEl.style.display = "inline";
+                    if (muteBtnEl) muteBtnEl.style.display = "inline";
+                };
+
+                pc.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        push(ref(db, `game/webrtc/ice/participant/${myId}`), event.candidate.toJSON());
+                    }
+                };
+
+                await pc.setRemoteDescription(new RTCSessionDescription(offer));
+
+                // 主催者からのICE candidateを受信（新規追加分だけ処理）
+                onChildAdded(ref(db, `game/webrtc/ice/host/${myId}`), (candSnap) => {
+                    const candidate = candSnap.val();
+                    if (candidate && pc.signalingState !== 'closed') {
+                        pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+                    }
+                });
+
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                await set(ref(db, `game/webrtc/answers/${myId}`), { sdp: answer.sdp, type: answer.type });
+            } catch (e) {
+                console.error("音声接続エラー(参加者側):", e);
+                participantPeerConnection = null;
+            }
+        });
+    }
+
+    // --- 参加者側：主催者音声のミュート切替 ---
+    let isVoiceMuted = false;
+    document.addEventListener('DOMContentLoaded', () => {
+        const voiceMuteBtn = document.getElementById('voice-mute-btn');
+        if (voiceMuteBtn) {
+            voiceMuteBtn.onclick = () => {
+                isVoiceMuted = !isVoiceMuted;
+                const audioEl = document.getElementById('host-voice-audio');
+                if (audioEl) audioEl.muted = isVoiceMuted;
+                voiceMuteBtn.innerText = isVoiceMuted ? "🔇" : "🔊";
+            };
+        }
+        const voiceToggleBtn = document.getElementById('btn-voice-toggle');
+        if (voiceToggleBtn) {
+            voiceToggleBtn.onclick = () => {
+                if (isVoiceBroadcasting) stopVoiceBroadcast();
+                else startVoiceBroadcast();
+            };
+        }
+    });
+
 </script>
 </body>
 </html>
