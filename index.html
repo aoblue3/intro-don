@@ -1418,7 +1418,7 @@ window.onYouTubeIframeAPIReady = () => {
         const titleCandidates = quizInfo.title.split('.').map(c => clean(c));
         const artistCandidates = quizInfo.artist.split('.').map(c => clean(c));
         // ★追加：エクストラワードとの完全一致判定（イントロモードのみ）
-        const isExtraWordMatch = (!quizInfo.isQuizMode && quizInfo.extraWord && clean(quizInfo.extraWord) === normIn);
+        const isExtraWordMatch = !!(!quizInfo.isQuizMode && quizInfo.extraWord && clean(quizInfo.extraWord) === normIn);
         const isTitle = titleCandidates.some(c => c !== "" && c === normIn) || isExtraWordMatch;
         const isArtist = artistCandidates.some(c => c !== "" && c === normIn);
 
