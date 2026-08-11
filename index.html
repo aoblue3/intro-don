@@ -127,19 +127,69 @@
             100% { transform: translateY(110vh) rotate(720deg); opacity: 0; }
         }
 
-        /* ★追加：リアクション絵文字の演出 */
+        /* ★追加：リアクション絵文字の演出（bottom%を動かすことでコンテナの高さに応じて画面上部近くまで伸びる） */
         .reaction-bubble {
-            position: absolute; bottom: 80px; font-size: 2.8rem; z-index: 9999; pointer-events: none;
-            animation: reaction-rise 2.5s ease-out forwards; text-shadow: 0 0 10px rgba(0,0,0,0.6);
+            position: absolute; bottom: 5%; font-size: 2.8rem; z-index: 9999; pointer-events: none;
+            text-shadow: 0 0 10px rgba(0,0,0,0.6);
         }
+        /* 通常：まっすぐ上昇 */
+        .reaction-bubble.rise { animation: reaction-rise 3s ease-out forwards; }
         @keyframes reaction-rise {
-            0% { transform: translateY(0) scale(0.5); opacity: 0; }
-            15% { opacity: 1; transform: translateY(-20px) scale(1.2); }
-            100% { transform: translateY(-320px) scale(1); opacity: 0; }
+            0% { bottom: 5%; opacity: 0; transform: scale(0.5); }
+            15% { opacity: 1; transform: scale(1.2); }
+            100% { bottom: 92%; opacity: 0; transform: scale(1); }
         }
-        #reaction-bar { display: flex; gap: 4px; margin: 0 5px; }
-        .reaction-btn { background: #333; border: none; border-radius: 50%; width: 34px; height: 34px; font-size: 16px; cursor: pointer; }
-        .reaction-btn:hover { background: #555; }
+        /* 💩：上から降ってくる */
+        .reaction-bubble.fall { top: -10%; bottom: auto; animation: reaction-fall 3s ease-in forwards; }
+        @keyframes reaction-fall {
+            0% { top: -10%; opacity: 0; transform: scale(0.5) rotate(0deg); }
+            15% { opacity: 1; transform: scale(1.2) rotate(15deg); }
+            100% { top: 95%; opacity: 0; transform: scale(1) rotate(-15deg); }
+        }
+        /* 😡：左右に震えながら上昇 */
+        .reaction-bubble.shake { animation: reaction-shake 3s ease-out forwards; }
+        @keyframes reaction-shake {
+            0% { bottom: 5%; opacity: 0; transform: translateX(0) scale(0.5); }
+            15% { opacity: 1; transform: translateX(-10px) scale(1.2); }
+            30% { transform: translateX(10px) scale(1.1); }
+            45% { transform: translateX(-10px) scale(1.1); }
+            60% { transform: translateX(10px) scale(1.1); }
+            75% { transform: translateX(-6px) scale(1.05); }
+            100% { bottom: 92%; opacity: 0; transform: translateX(0) scale(1); }
+        }
+        /* 🤪👺：回転しながら上昇 */
+        .reaction-bubble.spin { animation: reaction-spin 3s ease-out forwards; }
+        @keyframes reaction-spin {
+            0% { bottom: 5%; opacity: 0; transform: rotate(0deg) scale(0.5); }
+            15% { opacity: 1; transform: rotate(90deg) scale(1.2); }
+            100% { bottom: 92%; opacity: 0; transform: rotate(720deg) scale(1); }
+        }
+        /* 🥺：左右にゆらゆら揺れながら上昇 */
+        .reaction-bubble.sway { animation: reaction-sway 3.2s ease-out forwards; }
+        @keyframes reaction-sway {
+            0% { bottom: 5%; opacity: 0; margin-left: 0; transform: scale(0.5); }
+            15% { opacity: 1; transform: scale(1.1); }
+            30% { margin-left: -18px; }
+            50% { margin-left: 18px; }
+            70% { margin-left: -18px; }
+            100% { bottom: 92%; opacity: 0; margin-left: 0; transform: scale(1); }
+        }
+        /* 👍：ドンッと大きく弾んでから上昇 */
+        .reaction-bubble.pop { animation: reaction-pop 3s ease-out forwards; }
+        @keyframes reaction-pop {
+            0% { bottom: 5%; opacity: 0; transform: scale(0.3); }
+            20% { opacity: 1; transform: scale(1.7); }
+            35% { transform: scale(1.1); }
+            100% { bottom: 92%; opacity: 0; transform: scale(1.3); }
+        }
+
+        /* ★修正：リアクションバーを映像エリアの右端に縦並びで配置 */
+        #reaction-bar {
+            position: absolute; top: 50%; right: 10px; transform: translateY(-50%);
+            display: flex; flex-direction: column; gap: 6px; z-index: 90;
+        }
+        .reaction-btn { background: rgba(0,0,0,0.5); border: none; border-radius: 50%; width: 38px; height: 38px; font-size: 18px; cursor: pointer; }
+        .reaction-btn:hover { background: rgba(0,0,0,0.8); }
         #sidebar { flex: 2; background: #1a1a1a; border-left: 1px solid #333; display: flex; flex-direction: column; min-width: 250px; }
         #user-list { flex: 1; padding: 10px; overflow-y: auto; }
         .user-card { display: flex; align-items: center; justify-content: space-between; background: #2a2a2a; padding: 10px 15px; border-radius: 8px; margin-bottom: 6px; font-size: 14px; }
@@ -317,6 +367,19 @@
 <div id="main-game">
     <div id="video-section">
         <div id="screen-chat-overlay"></div>
+        <div id="reaction-bar">
+            <button class="reaction-btn" onclick="sendReaction('🔥')">🔥</button>
+            <button class="reaction-btn" onclick="sendReaction('😭')">😭</button>
+            <button class="reaction-btn" onclick="sendReaction('👏')">👏</button>
+            <button class="reaction-btn" onclick="sendReaction('🤔')">🤔</button>
+            <button class="reaction-btn" onclick="sendReaction('💦')">💦</button>
+            <button class="reaction-btn" onclick="sendReaction('🤪')">🤪</button>
+            <button class="reaction-btn" onclick="sendReaction('🥺')">🥺</button>
+            <button class="reaction-btn" onclick="sendReaction('💩')">💩</button>
+            <button class="reaction-btn" onclick="sendReaction('😡')">😡</button>
+            <button class="reaction-btn" onclick="sendReaction('👺')">👺</button>
+            <button class="reaction-btn" onclick="sendReaction('👍')">👍</button>
+        </div>
         <div id="quiz-title-mask"></div>
         <div id="mosaic-overlay"></div>
         <div id="quiz-question-display"></div>
@@ -356,13 +419,6 @@
             <button id="fullscreen-btn" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">全画面</button>
             <button id="pass-btn" onclick="sendPassSignal()" style="background:#888; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">パス</button>
             <button id="my-history-btn" onclick="showMyHistory()" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">履歴</button>
-            <div id="reaction-bar">
-                <button class="reaction-btn" onclick="sendReaction('🔥')">🔥</button>
-                <button class="reaction-btn" onclick="sendReaction('😭')">😭</button>
-                <button class="reaction-btn" onclick="sendReaction('👏')">👏</button>
-                <button class="reaction-btn" onclick="sendReaction('🤔')">🤔</button>
-                <button class="reaction-btn" onclick="sendReaction('💦')">💦</button>
-            </div>
             <button id="exit-game-btn" onclick="exitGame()" style="background:#dc3545; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">退出</button>
             <div class="volume-controls">
                 <span id="mute-btn" style="cursor:pointer;">🔈</span>
@@ -1601,18 +1657,34 @@ window.onYouTubeIframeAPIReady = () => {
     }
 
     // ★追加：リアクション絵文字を送信する（採点には一切関与しない、盛り上げ用のコメント機能）
+    let lastReactionTime = 0;
     window.sendReaction = (emoji) => {
+        // ★追加：連打対策として0.1秒のクールタイムを設ける
+        const now = Date.now();
+        if (now - lastReactionTime < 100) return;
+        lastReactionTime = now;
         push(ref(db, 'game/reactions'), { user: myName, emoji, time: serverTimestamp() });
+    };
+
+    // ★追加：絵文字ごとの演出パターンの割り当て
+    const REACTION_ANIM_MAP = {
+        '💩': 'fall',
+        '😡': 'shake',
+        '🤪': 'spin',
+        '👺': 'spin',
+        '🥺': 'sway',
+        '👍': 'pop'
     };
 
     // ★追加：受信したリアクションを画面に浮かせて表示する
     const showReactionBurst = (m) => {
         const div = document.createElement('div');
-        div.className = 'reaction-bubble';
+        const animType = REACTION_ANIM_MAP[m.emoji] || 'rise';
+        div.className = `reaction-bubble ${animType}`;
         div.innerText = m.emoji;
         div.style.left = (Math.random() * 70 + 15) + '%';
         document.getElementById('screen-chat-overlay').appendChild(div);
-        setTimeout(() => div.remove(), 2600);
+        setTimeout(() => div.remove(), 3300);
     };
 
     const sendSignal = (type, value) => set(ref(db, 'game/signal'), { type, value, time: Date.now() });
@@ -2557,9 +2629,9 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                         if (!voiceAudioContext) voiceAudioContext = new (window.AudioContext || window.webkitAudioContext)();
                         const source = voiceAudioContext.createMediaStreamSource(event.streams[0]);
                         voiceGainNode = voiceAudioContext.createGain();
-                        // ★修正：音量スライダーの現在値を初期ゲインとして使う
+                        // ★修正：ミュート中に再接続した場合は0のまま、そうでなければ音量スライダーの現在値を初期ゲインとして使う
                         const volSlider = document.getElementById('voice-volume-slider');
-                        voiceGainNode.gain.value = volSlider ? (Number(volSlider.value) / 100) : 3.0;
+                        voiceGainNode.gain.value = isVoiceMuted ? 0 : (volSlider ? Number(volSlider.value) / 100 : 3.0);
                         source.connect(voiceGainNode).connect(voiceAudioContext.destination);
                         if (voiceAudioContext.state === 'suspended') {
                             const enableBtn = document.getElementById('voice-enable-btn');
@@ -2576,7 +2648,8 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                     const statusEl = document.getElementById('voice-mic-status');
                     const muteBtnEl = document.getElementById('voice-mute-btn');
                     if (statusEl) statusEl.style.display = "inline";
-                    if (muteBtnEl) muteBtnEl.style.display = "inline";
+                    // ★修正：ボタンのアイコンも現在のミュート状態に合わせて表示する
+                    if (muteBtnEl) { muteBtnEl.style.display = "inline"; muteBtnEl.innerText = isVoiceMuted ? "🔇" : "🔊"; }
                 };
 
                 pc.onicecandidate = (event) => {
