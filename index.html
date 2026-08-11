@@ -331,6 +331,7 @@
             <button id="fullscreen-btn" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">全画面</button>
             <button id="pass-btn" onclick="sendPassSignal()" style="background:#888; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">パス</button>
             <button id="my-history-btn" onclick="showMyHistory()" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">履歴</button>
+            <button id="exit-game-btn" onclick="exitGame()" style="background:#dc3545; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">退出</button>
             <div class="volume-controls">
                 <span id="mute-btn" style="cursor:pointer;">🔈</span>
                 <input type="range" id="volume-slider" min="0" max="100" value="50">
@@ -2182,6 +2183,39 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         modalContainer.onclick = (event) => {
             if (event.target === modalContainer) closeModal();
         };
+    };
+
+    /**
+     * 完全に退出する関数（主催者・参加者共通）
+     * タブを閉じるだけでは稀に残ってしまう「亡霊」状態を防ぐため、
+     * 明示的にFirebase上の自分のデータを削除してから退出する
+     */
+    window.exitGame = async () => {
+        if (!confirm("退出しますか？（元のログイン画面に戻ります）")) return;
+
+        try {
+            // ★音声配信中/接続中なら先に後片付けする
+            if (isAdmin && typeof isVoiceBroadcasting !== 'undefined' && isVoiceBroadcasting && typeof stopVoiceBroadcast === 'function') {
+                await stopVoiceBroadcast();
+            }
+            if (!isAdmin && typeof participantPeerConnection !== 'undefined' && participantPeerConnection) {
+                try { participantPeerConnection.close(); } catch (e) {}
+                participantPeerConnection = null;
+            }
+
+            if (myId) {
+                const userRef = ref(db, `game/users/${myId}`);
+                // ★修正：完全削除はせず、既存の「切断時」と同じ isOnline: false にする
+                // （タブを閉じた時に頼っているonDisconnectと同じ結果を、押した瞬間に確実に反映させる）
+                try { await onDisconnect(userRef).cancel(); } catch (e) {}
+                await update(userRef, { isOnline: false, lastSeen: serverTimestamp() });
+            }
+        } catch (e) {
+            console.error("退出処理エラー:", e);
+        }
+
+        // 画面をリロードして最初のログイン画面に戻す
+        location.reload();
     };
 
     // ================================================================
