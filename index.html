@@ -2193,6 +2193,8 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
     let hostPeerConnections = {}; // { participantId: RTCPeerConnection }
     let hostConnectedParticipants = new Set(); // 既に接続済み/接続処理中の参加者ID
     let participantPeerConnection = null; // 参加者側の1本だけの接続
+    let voiceAudioContext = null; // ★追加：音量ブースト用のWeb Audio APIコンテキスト
+    let voiceGainNode = null; // ★追加：音量ブースト用のGainNode
 
     // --- 主催者側：特定の参加者1人への接続を確立する ---
     async function hostConnectToParticipant(participantId) {
@@ -2245,6 +2247,13 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
     async function startVoiceBroadcast() {
         try {
             hostMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            // ★追加：実際に使われているマイクの状態を確認（診断用）
+            const track = hostMicStream.getAudioTracks()[0];
+            if (track) {
+                console.log('[Voice/主催者] マイクトラック:', track.label, ' enabled:', track.enabled, ' muted:', track.muted, ' readyState:', track.readyState);
+            } else {
+                console.log('[Voice/主催者] 警告：音声トラックが取得できていません');
+            }
         } catch (e) {
             alert("マイクへのアクセスが許可されませんでした。");
             return;
@@ -2336,14 +2345,29 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                 pc.onconnectionstatechange = () => console.log('[Voice/参加者] 接続状態:', pc.connectionState);
 
                 pc.ontrack = (event) => {
+                    // ★追加：受け取った音声トラックの状態を確認（診断用）
+                    if (event.track) {
+                        console.log('[Voice/参加者] トラック受信 kind:', event.track.kind, ' enabled:', event.track.enabled, ' muted:', event.track.muted, ' readyState:', event.track.readyState);
+                    }
                     const audioEl = document.getElementById('host-voice-audio');
                     if (audioEl) {
                         audioEl.srcObject = event.streams[0];
-                        audioEl.play().catch(() => {
-                            // ★自動再生がブラウザにブロックされた場合、参加者に手動で有効化してもらうボタンを表示
+                        audioEl.muted = true; // ★Web Audio経由で出力するので、element自体はミュートして二重再生を防ぐ
+                        audioEl.play().catch(() => {});
+                    }
+                    // ★追加：Web Audio APIのGainNodeで音量を100%以上にブースト（マイクの入力音量が小さい場合の対策）
+                    try {
+                        if (!voiceAudioContext) voiceAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+                        const source = voiceAudioContext.createMediaStreamSource(event.streams[0]);
+                        voiceGainNode = voiceAudioContext.createGain();
+                        voiceGainNode.gain.value = 3.0; // 300%まで増幅
+                        source.connect(voiceGainNode).connect(voiceAudioContext.destination);
+                        if (voiceAudioContext.state === 'suspended') {
                             const enableBtn = document.getElementById('voice-enable-btn');
                             if (enableBtn) enableBtn.style.display = "inline-block";
-                        });
+                        }
+                    } catch (e) {
+                        console.error('[Voice/参加者] 音量ブースト初期化エラー:', e);
                     }
                     const statusEl = document.getElementById('voice-mic-status');
                     const muteBtnEl = document.getElementById('voice-mute-btn');
@@ -2384,8 +2408,8 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         if (voiceMuteBtn) {
             voiceMuteBtn.onclick = () => {
                 isVoiceMuted = !isVoiceMuted;
-                const audioEl = document.getElementById('host-voice-audio');
-                if (audioEl) audioEl.muted = isVoiceMuted;
+                // ★修正：音声はGainNode経由で出力しているので、GainNodeの音量を切り替える
+                if (voiceGainNode) voiceGainNode.gain.value = isVoiceMuted ? 0 : 3.0;
                 voiceMuteBtn.innerText = isVoiceMuted ? "🔇" : "🔊";
             };
         }
@@ -2401,10 +2425,13 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         if (voiceEnableBtn) {
             voiceEnableBtn.onclick = () => {
                 const audioEl = document.getElementById('host-voice-audio');
-                if (audioEl) {
-                    audioEl.play().then(() => {
+                if (audioEl) audioEl.play().catch(() => {});
+                if (voiceAudioContext && voiceAudioContext.state === 'suspended') {
+                    voiceAudioContext.resume().then(() => {
                         voiceEnableBtn.style.display = "none";
                     }).catch(() => {});
+                } else {
+                    voiceEnableBtn.style.display = "none";
                 }
             };
         }
