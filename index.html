@@ -158,14 +158,23 @@
         #ct-flash {
             position: absolute; inset: 0; background: #000; opacity: 0;
         }
-        @keyframes ct-flash-anim {
-            0% { opacity: 0; }
-            8% { opacity: 1; }
-            25% { opacity: 1; }
-            45% { opacity: 0; }
-            100% { opacity: 0; }
+        /* ★修正：暗転はフェードアウトせず「保持」する（この後TVオフ演出→フリーズの間、真っ黒を維持するため） */
+        #ct-flash.play { opacity: 1; transition: opacity 0.08s ease-in; }
+
+        /* ★追加：ブラウン管テレビの電源を切る時のような、白い線が縦→点に収縮する演出 */
+        #ct-tvline {
+            position: absolute; left: 0; top: 50%; width: 100%; height: 100%;
+            background: #fff; opacity: 0;
+            transform: translateY(-50%) scaleY(1) scaleX(1);
+            box-shadow: 0 0 40px 10px rgba(255,255,255,0.8);
         }
-        #ct-flash.play { animation: ct-flash-anim 0.7s ease-out forwards; }
+        #ct-tvline.play { animation: ct-tv-off 0.55s cubic-bezier(.7,0,.84,0) forwards; }
+        @keyframes ct-tv-off {
+            0% { opacity: 1; transform: translateY(-50%) scaleY(1) scaleX(1); }
+            55% { opacity: 1; transform: translateY(-50%) scaleY(0.006) scaleX(1); box-shadow: 0 0 60px 15px rgba(255,255,255,0.9); }
+            80% { opacity: 1; transform: translateY(-50%) scaleY(0.006) scaleX(0.02); box-shadow: 0 0 20px 6px rgba(255,255,255,0.9); }
+            100% { opacity: 0; transform: translateY(-50%) scaleY(0.001) scaleX(0.001); box-shadow: none; }
+        }
 
         #ct-rays {
             position: absolute; width: 220vmax; height: 220vmax;
@@ -630,6 +639,7 @@
 <!-- ★追加：チャンスタイム演出用オーバーレイ -->
 <div id="chance-time-overlay">
     <div id="ct-flash"></div>
+    <div id="ct-tvline"></div>
     <div id="ct-rays"></div>
     <div id="ct-text">
         <div class="ct-line1">🎰 CHANCE TIME!! 🎰</div>
@@ -1908,17 +1918,56 @@ window.onYouTubeIframeAPIReady = () => {
     }
 
     // ★追加：チャンスタイム（次のラウンド2倍ポイント）の演出本体。シグナル経由で全クライアントが同時再生する
+    // ★追加：「ピチュン」効果音を合成して鳴らす（外部音声ファイル不要）
+    let sfxAudioContext = null;
+    function playPichunSound() {
+        try {
+            if (!sfxAudioContext) sfxAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const ctx = sfxAudioContext;
+            if (ctx.state === 'suspended') ctx.resume();
+            const now = ctx.currentTime;
+
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(280, now);
+            osc.frequency.exponentialRampToValueAtTime(1900, now + 0.07);
+            osc.frequency.exponentialRampToValueAtTime(950, now + 0.2);
+            gain.gain.setValueAtTime(0.0001, now);
+            gain.gain.exponentialRampToValueAtTime(0.55, now + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
+            osc.connect(gain).connect(ctx.destination);
+            osc.start(now);
+            osc.stop(now + 0.45);
+        } catch (e) {
+            console.error('効果音再生エラー:', e);
+        }
+    }
+
     function playChanceTimeEffect() {
         const overlay = document.getElementById('chance-time-overlay');
         const flash = document.getElementById('ct-flash');
+        const tvline = document.getElementById('ct-tvline');
         const rays = document.getElementById('ct-rays');
         const text = document.getElementById('ct-text');
-        if (!overlay || !flash || !rays || !text) return;
+        if (!overlay || !flash || !tvline || !rays || !text) return;
 
         overlay.style.display = 'flex';
         // クラスを一度外して再度付け直すことでアニメーションを確実に最初から再生する
-        flash.classList.remove('play'); void flash.offsetWidth; flash.classList.add('play');
+        flash.classList.remove('play'); void flash.offsetWidth;
+        tvline.classList.remove('play'); void tvline.offsetWidth;
 
+        // ★Step1：ピチュン効果音 ＋ 昔のテレビを消すような収縮演出
+        playPichunSound();
+        flash.classList.add('play'); // 背後を真っ黒に固定
+        tvline.classList.add('play'); // 白い線が縦→点に収縮
+
+        // ★Step2：収縮完了後、真っ暗な画面でしばし溜める（フリーズ演出）
+        setTimeout(() => {
+            tvline.classList.remove('play');
+        }, 600);
+
+        // ★Step3：溜めが終わったら、虹色の光が大爆発＋テキスト＋紙吹雪
         setTimeout(() => {
             rays.classList.remove('play'); void rays.offsetWidth; rays.classList.add('play');
             text.classList.remove('play'); void text.offsetWidth; text.classList.add('play');
@@ -1928,14 +1977,16 @@ window.onYouTubeIframeAPIReady = () => {
                 setTimeout(() => triggerConfetti(), 650);
                 setTimeout(() => triggerConfetti(), 1000);
             }
-        }, 550);
+        }, 1300);
 
+        // ★Step4：演出終了、通常画面へ
         setTimeout(() => {
             overlay.style.display = 'none';
             flash.classList.remove('play');
+            tvline.classList.remove('play');
             rays.classList.remove('play');
             text.classList.remove('play');
-        }, 3700);
+        }, 4450);
     }
 
     // ★追加：主催者が「🎰 チャンスタイム」ボタンを押した時の処理
@@ -1946,7 +1997,7 @@ window.onYouTubeIframeAPIReady = () => {
         // 演出のクライマックス（テキスト表示直後）に合わせて、実際に2倍モードで次の曲を読み込む
         setTimeout(() => {
             loadNextFromReserve(false, true);
-        }, 2600);
+        }, 3350);
     };
 
     // ★追加：リアクション絵文字を送信する（採点には一切関与しない、盛り上げ用のコメント機能）
