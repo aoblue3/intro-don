@@ -611,13 +611,7 @@
     async function joinGame(role) {
         isAdmin = (role === 'admin');
         if(isAdmin) document.body.classList.add('is-admin-mode');
-// 【ここから追加】
-        let savedId = localStorage.getItem('quiz_user_id');
-        if (!savedId) {
-            localStorage.setItem('quiz_user_id', myId);
-        } else {
-            myId = savedId;
-        }
+        // ★修正：myIdは既にFirebase Authのuidで確定しているため、古いlocalStorageベースのID上書き処理は撤去
 
         const userRef = ref(db, `game/users/${myId}`);
         const snap = await get(userRef);
