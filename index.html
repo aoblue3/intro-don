@@ -143,6 +143,86 @@
         }
         .champion-glow-active { animation: champion-glow 1.1s infinite; }
 
+        /* ★追加：チャンスタイムボタンの虹色グラデーション常時点滅 */
+        @keyframes chance-btn-gradient {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        /* ★追加：チャンスタイム演出オーバーレイ */
+        #chance-time-overlay {
+            position: fixed; inset: 0; z-index: 200000; display: none;
+            align-items: center; justify-content: center; overflow: hidden; pointer-events: none;
+        }
+        #ct-flash {
+            position: absolute; inset: 0; background: #000; opacity: 0;
+        }
+        @keyframes ct-flash-anim {
+            0% { opacity: 0; }
+            8% { opacity: 1; }
+            25% { opacity: 1; }
+            45% { opacity: 0; }
+            100% { opacity: 0; }
+        }
+        #ct-flash.play { animation: ct-flash-anim 0.7s ease-out forwards; }
+
+        #ct-rays {
+            position: absolute; width: 220vmax; height: 220vmax;
+            background: conic-gradient(from 0deg, #ff0080, #ff8c00, #ffd700, #00e5ff, #7b2ff7, #ff0080);
+            opacity: 0; transform: scale(0) rotate(0deg);
+        }
+        @keyframes ct-rays-anim {
+            0% { opacity: 0; transform: scale(0) rotate(0deg); }
+            20% { opacity: 0.85; }
+            100% { opacity: 0.85; transform: scale(1) rotate(340deg); }
+        }
+        #ct-rays.play { animation: ct-rays-anim 3.2s cubic-bezier(.2,.8,.3,1) forwards; }
+
+        #ct-text { position: relative; text-align: center; opacity: 0; transform: scale(0.3); z-index: 2; }
+        #ct-text.play { animation: ct-text-anim 1.1s cubic-bezier(.34,1.56,.64,1) forwards; animation-delay: 0.5s; }
+        @keyframes ct-text-anim {
+            0% { opacity: 0; transform: scale(0.3) rotate(-8deg); }
+            60% { opacity: 1; transform: scale(1.3) rotate(4deg); }
+            80% { transform: scale(0.92) rotate(-2deg); }
+            100% { opacity: 1; transform: scale(1.05) rotate(0deg); }
+        }
+        .ct-line1 {
+            font-size: 4rem; font-weight: 900;
+            background: linear-gradient(90deg, #ff0080, #ff8c00, #ffd700, #00e5ff, #7b2ff7, #ff0080);
+            background-size: 300% 100%;
+            -webkit-background-clip: text; background-clip: text; color: transparent;
+            animation: ct-rainbow-text 1.5s linear infinite;
+            text-shadow: 0 0 30px rgba(255,255,255,0.5);
+            letter-spacing: 2px;
+        }
+        @keyframes ct-rainbow-text {
+            0% { background-position: 0% 50%; }
+            100% { background-position: 300% 50%; }
+        }
+        .ct-line2 {
+            font-size: 2.2rem; font-weight: bold; color: #fff; margin-top: 10px;
+            text-shadow: 0 0 20px gold, 0 0 40px gold;
+        }
+
+        /* ★追加：2倍ラウンド中、映像エリアを金色に縁取って常時アピール */
+        @keyframes double-border-glow {
+            0% { box-shadow: 0 0 20px gold, inset 0 0 20px rgba(255,215,0,0.2); border-color: gold; }
+            50% { box-shadow: 0 0 60px gold, inset 0 0 60px rgba(255,215,0,0.5); border-color: #fff59d; }
+            100% { box-shadow: 0 0 20px gold, inset 0 0 20px rgba(255,215,0,0.2); border-color: gold; }
+        }
+        #video-section.double-round-active {
+            border: 4px solid gold;
+            animation: double-border-glow 1.6s infinite;
+        }
+        #double-round-badge {
+            position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+            background: linear-gradient(90deg, #ff0080, #ffd700, #ff0080);
+            background-size: 200% 100%; animation: chance-btn-gradient 1.5s linear infinite;
+            color: #000; font-weight: 900; padding: 6px 18px; border-radius: 20px;
+            font-size: 0.95rem; z-index: 95; display: none; box-shadow: 0 0 20px gold;
+        }
+
         /* ★追加：最終結果の特別称号 */
         .final-title-item {
             opacity: 0; transform: translateX(-20px); transition: all 0.5s ease;
@@ -378,6 +458,7 @@
         <span id="voice-status" style="color:#0f0; font-size:11px; margin-left:5px;"></span>
         ｜ <button class="admin-btn" id="btn-export-log" style="background:#17a2b8">📄 全ログ出力</button>
         ｜ <button class="admin-btn" id="btn-final-results" style="background:linear-gradient(45deg, var(--gold), #ff9800); color:#000; font-weight:bold;">🏆 最終結果発表</button>
+        ｜ <button class="admin-btn" id="btn-blind-mode" style="background:#333">🙈 ブラインドモード OFF</button>
         ｜ <input type="range" id="admin-seekbar" min="0" max="100" value="0">
         <span id="admin-time-display" style="color:#0f0; font-size:12px; font-family:monospace; min-width:35px;">0:00</span>
     </div>
@@ -387,6 +468,8 @@
         <button class="admin-btn" id="btn-next-quiz" onclick="loadNextFromReserve(false)" style="background:var(--primary-color); height:50px;">次の曲へ</button>
         <!-- ランダム次の曲へ：新しく作った関数をonclickで直接呼び出し、ランダムモードを実行します -->
         <button class="admin-btn" id="btn-random-quiz" onclick="loadRandomFromReserve()" style="background:#6c757d; height:50px; margin-left:5px;">ランダム次の曲へ</button>
+        <!-- ★追加：チャンスタイム（次のラウンドのポイント2倍＋豪華演出） -->
+        <button class="admin-btn" id="btn-chance-time" onclick="startChanceTime()" style="background:linear-gradient(45deg, #ff0080, #ff8c00, #ffd700, #00e5ff, #ff0080); background-size: 400% 400%; animation: chance-btn-gradient 2s ease infinite; color:#fff; font-weight:bold; height:50px; margin-left:5px; text-shadow: 0 0 4px #000;">🎰 チャンスタイム</button>
         <span id="admin-answer-preview" style="color:#0f0; font-size:12px; margin-left:10px;"></span>
     </div>
 </div>
@@ -460,6 +543,7 @@
 
 <div id="main-game">
     <div id="video-section">
+        <div id="double-round-badge">🎰 2倍ラウンド中！</div>
         <div id="screen-chat-overlay"></div>
         <div id="reaction-bar">
             <button class="reaction-btn" onclick="sendReaction('🔥')">🔥</button>
@@ -543,6 +627,16 @@
     </div>
 </div>
 
+<!-- ★追加：チャンスタイム演出用オーバーレイ -->
+<div id="chance-time-overlay">
+    <div id="ct-flash"></div>
+    <div id="ct-rays"></div>
+    <div id="ct-text">
+        <div class="ct-line1">🎰 CHANCE TIME!! 🎰</div>
+        <div class="ct-line2">ポイント2倍発生！！</div>
+    </div>
+</div>
+
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
     import { getDatabase, ref, set, onValue, onChildAdded, push, remove, update, increment, query, limitToLast, onDisconnect, get, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
@@ -569,6 +663,7 @@
     let hasPointedTitle = false, hasPointedArtist = false, isRevealedGlobal = false;
     let roundPointsEarned = 0;
     let lastVolume = 50, isMuted = false, currentRankingVisible = false, currentFinalResultsVisible = false;
+    let blindModeActive = false; // ★追加：ブラインドモード中はスコア・順位を隠す
     let lastVideoId = ""; 
     let isFirstPlayOfRound = true;
 
@@ -833,6 +928,13 @@ window.onYouTubeIframeAPIReady = () => {
 
             quizInfo = data; // ここで新しいデータに更新します
             window.is1stPointAwarded = false; // 全体の1位フラグもリセット
+
+            // ★追加：2倍ラウンド中の常時表示（枠の光り・バッジ）を切り替える
+            const videoSectionEl = document.getElementById('video-section');
+            const doubleRoundBadge = document.getElementById('double-round-badge');
+            const isDoubleRound = Number(quizInfo.pointMultiplier) > 1;
+            if (videoSectionEl) videoSectionEl.classList.toggle('double-round-active', isDoubleRound);
+            if (doubleRoundBadge) doubleRoundBadge.style.display = isDoubleRound ? 'block' : 'none';
 
             // --- 選択肢モードのUI制御ここから追加 ---
             const choiceArea = document.getElementById('choice-container');
@@ -1151,6 +1253,8 @@ window.onYouTubeIframeAPIReady = () => {
                     const titlesList = document.getElementById('final-titles-list');
                     if (titlesList) titlesList.innerHTML = "";
                 }
+            } else if(sig.type === 'chance_time_effect') {
+                if (typeof playChanceTimeEffect === 'function') playChanceTimeEffect();
             } else if(sig.type === 'show_video') {
                 const playerEl = document.getElementById('player');
                 document.getElementById('video-cover').style.display = sig.value ? "none" : "flex";
@@ -1186,6 +1290,16 @@ window.onYouTubeIframeAPIReady = () => {
             }
         });
 
+        // ★追加：ブラインドモードの状態を監視する
+        onValue(ref(db, 'game/blindMode'), (snap) => {
+            blindModeActive = snap.val() === true;
+            const btn = document.getElementById('btn-blind-mode');
+            if (btn) {
+                btn.innerText = blindModeActive ? "🙈 ブラインドモード ON" : "🙈 ブラインドモード OFF";
+                btn.style.background = blindModeActive ? "#e91e63" : "#333";
+            }
+        });
+
         onValue(ref(db, 'game/users'), (snap) => {
             const usersData = snap.val() || {};
             const usersArray = Object.values(usersData);
@@ -1206,6 +1320,8 @@ window.onYouTubeIframeAPIReady = () => {
             users.sort((a,b) => {
                 if (a.isAdmin !== b.isAdmin) return a.isAdmin ? -1 : 1;
                 if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
+                // ★修正：ブラインドモード中はスコア順にせず、参加順で固定して順位変動を隠す
+                if (blindModeActive) return (a.joinedAt || 0) - (b.joinedAt || 0);
                 if (b.score !== a.score) return b.score - a.score;
                 return a.joinedAt - b.joinedAt;
             });
@@ -1233,7 +1349,8 @@ window.onYouTubeIframeAPIReady = () => {
                     }
                 }
 
-                const isTop = (displayScore > 0 && displayScore === currentMax);
+                // ★修正：ブラインドモード中は最高得点判定も王冠も出さない
+                const isTop = (!blindModeActive) && (displayScore > 0 && displayScore === currentMax);
                 const crown = isTop ? '<span class="crown">👑</span>' : '';
                 
                 // 消えてしまっていた正解マークの行もここに復活させて安全に合流させます
@@ -1258,7 +1375,8 @@ window.onYouTubeIframeAPIReady = () => {
 
                 // 4. ボタンとスコア表示
                 const banBtn = (isAdmin && !u.isAdmin) ? `<button onclick="banUser('${u.id}')" style="font-size:10px; margin-left:5px; padding:2px 4px; border-radius:4px; border:none; background:#ff4d4d; color:white; cursor:pointer;">BAN</button>` : '';
-                const scoreDisplay = u.isAdmin ? "" : `<b>${displayScore} pt</b>`;
+                // ★修正：ブラインドモード中はスコアの代わりに🙈を表示（主催者・参加者どちらも）
+                const scoreDisplay = u.isAdmin ? "" : (blindModeActive ? `<span style="color:#888; font-size:12px;">🙈</span>` : `<b>${displayScore} pt</b>`);
 
                 // ★修正2：確実にデータを反映させるため、Firebaseのデータベース（ref(db, 'game/chats')）の最新情報、またはローカルに保持されている正しいデータソースから名前が一致する正解・回答履歴を1件ずつ正確に照合・集計する処理を挟みます。
                 // 主催者側かつクリック時にその場で最新データを集計してアラート表示する関数を要素に直接仕込みます
@@ -1520,6 +1638,11 @@ window.onYouTubeIframeAPIReady = () => {
                 addedPoints += 5;
             }
 
+            // ★追加：チャンスタイム中（ポイント2倍ラウンド）はここで最終的に倍率をかける
+            if (addedPoints > 0 && quizInfo.pointMultiplier > 1) {
+                addedPoints = addedPoints * quizInfo.pointMultiplier;
+            }
+
             if (addedPoints >= 0) {
                 const totalInThisRound = roundPointsEarned + addedPoints;
 
@@ -1599,7 +1722,11 @@ window.onYouTubeIframeAPIReady = () => {
             }
         } else if (!quizInfo.isQuizMode && isArtist && !hasPointedArtist && !hasPointedTitle) {
 
-            const addedPoints = Math.max(0, artistPoints - roundPointsEarned);
+            let addedPoints = Math.max(0, artistPoints - roundPointsEarned);
+            // ★追加：チャンスタイム中（ポイント2倍ラウンド）は倍率をかける
+            if (addedPoints > 0 && quizInfo.pointMultiplier > 1) {
+                addedPoints = addedPoints * quizInfo.pointMultiplier;
+            }
             if (addedPoints > 0) {
                 const artistPtsValue = `${addedPoints}pt`; 
                 const currentRound = quizInfo.round || quizInfo.currentRound || 1;
@@ -1780,6 +1907,48 @@ window.onYouTubeIframeAPIReady = () => {
         }
     }
 
+    // ★追加：チャンスタイム（次のラウンド2倍ポイント）の演出本体。シグナル経由で全クライアントが同時再生する
+    function playChanceTimeEffect() {
+        const overlay = document.getElementById('chance-time-overlay');
+        const flash = document.getElementById('ct-flash');
+        const rays = document.getElementById('ct-rays');
+        const text = document.getElementById('ct-text');
+        if (!overlay || !flash || !rays || !text) return;
+
+        overlay.style.display = 'flex';
+        // クラスを一度外して再度付け直すことでアニメーションを確実に最初から再生する
+        flash.classList.remove('play'); void flash.offsetWidth; flash.classList.add('play');
+
+        setTimeout(() => {
+            rays.classList.remove('play'); void rays.offsetWidth; rays.classList.add('play');
+            text.classList.remove('play'); void text.offsetWidth; text.classList.add('play');
+            if (typeof triggerConfetti === 'function') {
+                triggerConfetti();
+                setTimeout(() => triggerConfetti(), 300);
+                setTimeout(() => triggerConfetti(), 650);
+                setTimeout(() => triggerConfetti(), 1000);
+            }
+        }, 550);
+
+        setTimeout(() => {
+            overlay.style.display = 'none';
+            flash.classList.remove('play');
+            rays.classList.remove('play');
+            text.classList.remove('play');
+        }, 3700);
+    }
+
+    // ★追加：主催者が「🎰 チャンスタイム」ボタンを押した時の処理
+    window.startChanceTime = async () => {
+        if (!isAdmin) return;
+        // 演出シグナルを全員に送る（音声配信などと同じ、Firebaseは合図だけを送る軽い仕組み）
+        await sendSignal('chance_time_effect', true);
+        // 演出のクライマックス（テキスト表示直後）に合わせて、実際に2倍モードで次の曲を読み込む
+        setTimeout(() => {
+            loadNextFromReserve(false, true);
+        }, 2600);
+    };
+
     // ★追加：リアクション絵文字を送信する（採点には一切関与しない、盛り上げ用のコメント機能）
     let lastReactionTime = 0;
     // ★追加：ボタンに存在する絵文字だけを許可するホワイトリスト
@@ -1825,7 +1994,7 @@ window.onYouTubeIframeAPIReady = () => {
 
     const sendSignal = (type, value) => set(ref(db, 'game/signal'), { type, value, time: Date.now() });
 
-    const loadNextFromReserve = async (isRandom = false) => {
+    const loadNextFromReserve = async (isRandom = false, isDouble = false) => {
         // --- 修正箇所：ボタンから明示的に true が渡されない限り、絶対に勝手にランダムにならないようガード ---
         const checkRandom = (isRandom === true) ? true : false;
         
@@ -1964,7 +2133,8 @@ window.onYouTubeIframeAPIReady = () => {
             // ★超重要：次のラウンドに進むこの瞬間に、そのラウンドが「クイズモード（選択肢含む）」なのか「イントロモード」なのかの
             // 決定的なフラグを、過去の履歴が壊されないための防衛策として、設定データ（settings）の中に正しく刻み込んで送信します。
             isQuizModeRound: (isQuiz || isChoice) ? true : false,
-            extraWord: extraWord // ★追加：エクストラポイント対象ワード（イントロモードのみ判定で使用）
+            extraWord: extraWord, // ★追加：エクストラポイント対象ワード（イントロモードのみ判定で使用）
+            pointMultiplier: isDouble ? 2 : 1 // ★追加：チャンスタイム中は2倍
         });
         // --- 修正箇所ここまで ---
         // --- 修正箇所（Firebaseへの設定送信）ここまで ---
@@ -2178,7 +2348,11 @@ async function renderRanking() {
             // ★修正：1位、2位、3位のポイント加算処理（1位: 5pt / 2位: 3pt / 3位: 2pt）
             if (isAdmin && !window.is1stPointAwarded) {
                 const bonusMap = { 0: 5, 1: 3, 2: 2 };
-                const bonus = bonusMap[target.rankIndex];
+                let bonus = bonusMap[target.rankIndex];
+                // ★追加：チャンスタイム中（ポイント2倍ラウンド）は早解きボーナスも倍率をかける
+                if (bonus !== undefined && quizInfo.pointMultiplier > 1) {
+                    bonus = bonus * quizInfo.pointMultiplier;
+                }
                 const rankNum = target.rankIndex + 1;
                 if (bonus !== undefined) {
                     if (target.rankIndex === 0) rankPanel.classList.add('winner-anim');
@@ -2594,6 +2768,11 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         document.getElementById('btn-final-results').onclick = () => {
             currentFinalResultsVisible = !currentFinalResultsVisible;
             sendSignal('show_final_results', currentFinalResultsVisible);
+        };
+
+        // ★追加：ブラインドモードのON/OFF切り替え
+        document.getElementById('btn-blind-mode').onclick = () => {
+            set(ref(db, 'game/blindMode'), !blindModeActive);
         };
         
         // ★修正：次の曲に進むボタンが押された時、早解きランキングが非表示（または存在しない）状態なら警告を出す
