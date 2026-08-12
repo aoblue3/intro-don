@@ -120,9 +120,10 @@
         /* ★追加：最終結果発表パネル（豪華め） */
         #final-results {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: 88%; max-width: 620px; display: none; z-index: 110;
+            width: 88%; max-width: 620px; max-height: 82vh; display: none; z-index: 110;
             border: 3px solid var(--gold); background: rgba(0,0,0,0.97);
             border-radius: 22px; padding: 30px; box-shadow: 0 0 80px rgba(255,215,0,0.4);
+            overflow-y: auto;
         }
         .final-rank-item {
             opacity: 0; transform: translateY(30px) scale(0.9); transition: all 0.6s cubic-bezier(.34,1.56,.64,1);
@@ -491,8 +492,8 @@
         </div>        
         <div id="final-results">
             <div style="text-align:center; color:var(--gold); font-weight:bold; font-size:1.6rem; border-bottom:2px solid var(--gold); padding-bottom:10px; margin-bottom:15px; text-shadow:0 0 15px var(--gold);">🏆 FINAL RESULTS 🏆</div>
+            <div id="final-titles-list" style="margin-bottom:10px;"></div>
             <div id="final-rank-list"></div>
-            <div id="final-titles-list" style="margin-top:10px;"></div>
         </div>
         <div id="player-wrapper">
             <div id="click-guard"></div>
@@ -1777,7 +1778,12 @@ window.onYouTubeIframeAPIReady = () => {
 
     // ★追加：リアクション絵文字を送信する（採点には一切関与しない、盛り上げ用のコメント機能）
     let lastReactionTime = 0;
+    // ★追加：ボタンに存在する絵文字だけを許可するホワイトリスト
+    const ALLOWED_REACTIONS = ['🔥', '😭', '👏', '🤔', '💦', '🤪', '🥺', '💩', '😡', '👺', '👍'];
+
     window.sendReaction = (emoji) => {
+        // ★追加：ホワイトリストに無い絵文字・任意の文字列は弾く（コンソールからの直接呼び出し対策）
+        if (!ALLOWED_REACTIONS.includes(emoji)) return;
         // ★修正：連打対策として0.3秒のクールタイムを設ける
         const now = Date.now();
         if (now - lastReactionTime < 300) return;
@@ -1802,6 +1808,8 @@ window.onYouTubeIframeAPIReady = () => {
 
     // ★追加：受信したリアクションを画面に浮かせて表示する
     const showReactionBurst = (m) => {
+        // ★追加：受信側でも念のためホワイトリストチェック（Firebaseへの直接書き込み対策の保険）
+        if (!ALLOWED_REACTIONS.includes(m.emoji)) return;
         const div = document.createElement('div');
         const animType = REACTION_ANIM_MAP[m.emoji] || 'rise';
         div.className = `reaction-bubble ${animType}`;
@@ -2436,6 +2444,32 @@ async function renderRanking() {
         if (users.length === 0) { list.innerHTML = "<div>参加者がいません</div>"; return; }
 
         users.sort((a, b) => (b.score || 0) - (a.score || 0));
+
+        // ★修正：先に特別称号を集計して1つずつ表示する
+        try {
+            const titles = await computeTitles(users);
+            if (titles.length > 0) {
+                const header = document.createElement('div');
+                header.style.cssText = "text-align:center; color:#aaa; font-size:0.85rem; margin-bottom:6px; padding-bottom:8px; border-bottom:1px solid #333;";
+                header.innerText = "🎖️ 特別賞 🎖️";
+                titlesList.appendChild(header);
+
+                for (const t of titles) {
+                    await new Promise(r => setTimeout(r, 400));
+                    const div = document.createElement('div');
+                    div.className = 'final-title-item';
+                    div.innerHTML = `<span>${t.emoji} <span class="title-label">${t.label}</span>：${t.name}</span><span class="title-detail">${t.detail}</span>`;
+                    titlesList.appendChild(div);
+                    requestAnimationFrame(() => div.classList.add('show'));
+                }
+            }
+        } catch (e) {
+            console.error("称号集計エラー:", e);
+        }
+
+        // ★修正：称号発表が終わったら、続けて順位発表に入る
+        await new Promise(r => setTimeout(r, 800));
+
         const topN = users.slice(0, 5); // 上位5人まで発表
 
         const elements = [];
@@ -2472,28 +2506,6 @@ async function renderRanking() {
                     setTimeout(() => triggerConfetti(), 800);
                 }
             }
-        }
-
-        // ★追加：ランキング発表が終わったら、特別称号を集計して1つずつ表示する
-        try {
-            const titles = await computeTitles(users);
-            if (titles.length > 0) {
-                const header = document.createElement('div');
-                header.style.cssText = "text-align:center; color:#aaa; font-size:0.85rem; margin-top:16px; margin-bottom:6px; border-top:1px solid #333; padding-top:12px;";
-                header.innerText = "🎖️ 特別賞 🎖️";
-                titlesList.appendChild(header);
-
-                for (const t of titles) {
-                    await new Promise(r => setTimeout(r, 400));
-                    const div = document.createElement('div');
-                    div.className = 'final-title-item';
-                    div.innerHTML = `<span>${t.emoji} <span class="title-label">${t.label}</span>：${t.name}</span><span class="title-detail">${t.detail}</span>`;
-                    titlesList.appendChild(div);
-                    requestAnimationFrame(() => div.classList.add('show'));
-                }
-            }
-        } catch (e) {
-            console.error("称号集計エラー:", e);
         }
     }
 
