@@ -546,6 +546,7 @@
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
     import { getDatabase, ref, set, onValue, onChildAdded, push, remove, update, increment, query, limitToLast, onDisconnect, get, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+    import { getAuth, signInAnonymously, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
     const firebaseConfig = {
         apiKey: "AIzaSyAWAEgirPeXoqn6b9YATepoudYfN9NGWB8",
@@ -559,6 +560,9 @@
 
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
+    const auth = getAuth(app);
+    // ★追加：主催者ログイン専用の固定メールアドレス（Firebaseコンソールで作成したアカウントに対応させる）
+    const ADMIN_AUTH_EMAIL = "admin@introdon.local";
     const pageJoinTime = Date.now();
     let player, myName = "", myId = "", isAdmin = false;
     let quizInfo = { title: "", artist: "", round: 0, isQuizMode: false, isMosaicMode: false, questionText: "", startTimeOffset: 0, volumeRatio: 1.0 };
@@ -580,10 +584,16 @@
                 .replace(/"/g, "&quot;")
                 .replace(/'/g, "&#039;");
             if(!baseName) return alert("名前を入力してください");
-            if(role === 'admin') { myId = "admin_master"; myName = baseName; } 
+            if(role === 'admin') {
+                // ★修正：Firebase Authで既にログイン済みのuidをそのままIDとして使う
+                if (!auth.currentUser) { alert("認証エラー: もう一度ログインしてください"); return; }
+                myId = auth.currentUser.uid;
+                myName = baseName;
+            } 
             else {
-                myId = localStorage.getItem('intro_don_uid') || 'u_' + Math.random().toString(36).substr(2, 9);
-                localStorage.setItem('intro_don_uid', myId);
+                // ★修正：匿名ログインしてFirebaseの本物のuidをIDとして使う（Firebase側が永続化してくれるので同じ端末なら次回も同じID）
+                const cred = await signInAnonymously(auth);
+                myId = cred.user.uid;
                 const usersSnap = await get(ref(db, 'game/users'));
                 let finalName = baseName;
                 if(usersSnap.exists()){
@@ -595,7 +605,7 @@
                 myName = finalName;
             }
             await joinGame(role);
-        } catch (e) { alert("ログインエラー"); }
+        } catch (e) { console.error(e); alert("ログインエラー"); }
     };
 
     async function joinGame(role) {
@@ -2545,24 +2555,12 @@ async function renderRanking() {
             if (!pass) return;
 
             try {
-                // Firebase v10の書き方でデータベースからパスワードを取得
-                const snapshot = await get(ref(db, 'admin/password'));
-                const correctPass = snapshot.val();
-
-                if (correctPass === null) {
-                    alert("システムエラー: パスワード設定が見つかりません。");
-                    return;
-                }
-
-                // 入力された値とFirebaseの値を比較
-                if (pass === String(correctPass)) {
-                    prepareJoin('admin');
-                } else {
-                    alert("パスワードが違います");
-                }
+                // ★修正：DB上の平文パスワード比較をやめ、Firebase Authenticationでの本物のログインに一本化
+                await signInWithEmailAndPassword(auth, ADMIN_AUTH_EMAIL, pass);
+                prepareJoin('admin');
             } catch (error) {
-                console.error("Firebase通信エラー:", error);
-                alert("通信エラーが発生しました。");
+                console.error("管理者ログインエラー:", error);
+                alert("パスワードが違います");
             }
         };
 document.getElementById('btn-send-answer').onclick = sendAnswer;
@@ -2617,13 +2615,14 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         document.getElementById('admin-close-lock').onclick = async () => {
             const pass = prompt("主催者パスワードを入力してください");
             if (!pass) return;
-            const snapshot = await get(ref(db, 'admin/password'));
-            const correctPass = snapshot.val();
-            if (pass === String(correctPass)) {
+            try {
+                // ★修正：DB上の平文パスワード比較をやめ、Firebase Authenticationでの本物のログインに一本化
+                await signInWithEmailAndPassword(auth, ADMIN_AUTH_EMAIL, pass);
                 const isNowClosed = document.getElementById('btn-join-player').style.display === "none";
-                update(ref(db, 'game/settings'), { isClosed: !isNowClosed });
+                await update(ref(db, 'game/settings'), { isClosed: !isNowClosed });
                 alert(!isNowClosed ? "ルームを閉鎖しました。" : "ルームを開放しました。");
-            } else {
+            } catch (error) {
+                console.error("認証エラー:", error);
                 alert("パスワードが違います");
             }
         };
