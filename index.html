@@ -562,7 +562,7 @@
     const db = getDatabase(app);
     const auth = getAuth(app);
     // ★追加：主催者ログイン専用の固定メールアドレス（Firebaseコンソールで作成したアカウントに対応させる）
-    const ADMIN_AUTH_EMAIL = "admin@introdon.local";
+    const ADMIN_AUTH_EMAIL = "introdon-admin@introdon-quiz.com";
     const pageJoinTime = Date.now();
     let player, myName = "", myId = "", isAdmin = false;
     let quizInfo = { title: "", artist: "", round: 0, isQuizMode: false, isMosaicMode: false, questionText: "", startTimeOffset: 0, volumeRatio: 1.0 };
@@ -2532,7 +2532,15 @@ async function renderRanking() {
         await set(ref(db, 'game/signal'), { type: 'play', value: sec, time: playTime });
     };
 
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', async () => {
+        // ★追加：ログイン前でも部屋の状態を読めるように、ページを開いた瞬間にまず匿名ログインしておく
+        // （後で「主催者ログイン」を押した場合はこの匿名セッションが管理者アカウントに切り替わる）
+        try {
+            if (!auth.currentUser) await signInAnonymously(auth);
+        } catch (e) {
+            console.error("初期匿名ログインエラー:", e);
+        }
+
         // 全ブラウザ共通：部屋の閉鎖状態を常に監視する
         onValue(ref(db, 'game/settings'), (snap) => {
             const settings = snap.val() || {};
