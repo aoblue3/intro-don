@@ -109,7 +109,7 @@
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         /* コメント関連 */
         #screen-chat-overlay { position: absolute; inset: 0; z-index: 9999; pointer-events: none; overflow: hidden; }
-        .danmaku { position: absolute; white-space: nowrap; font-size: 2rem; font-weight: bold; color: #fff; text-shadow: 2px 2px 4px #000; left: 100%; animation: scrollLeft 4s linear forwards; }
+        .danmaku { position: absolute; white-space: nowrap; font-size: 2rem; font-weight: bold; color: #fff; text-shadow: 2px 2px 4px #000; left: 100%; animation: scrollLeft 6s linear forwards; }
         @keyframes scrollLeft { from { left: 100%; } to { left: -150%; } }
         
         #fastest-ranking { 
@@ -903,6 +903,7 @@ window.onYouTubeIframeAPIReady = () => {
                 'enablejsapi': 1,
                 'widget_referrer': origin,
                 'playsinline': 1,
+                'cc_load_policy': 0, // ★追加：字幕を自動でONにしない
                 // 不要なパラメータ（iv_load_policy等）を一切排除し、
                 // Firefoxのトラッキング防止に引っかからない「最小構成」にする
             },
@@ -914,6 +915,8 @@ window.onYouTubeIframeAPIReady = () => {
                         // ブラウザに自動再生と暗号化メディアの許可を明示的に伝える
                         iframe.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture');
                     }
+                    // ★追加：視聴者のアカウント設定で字幕が強制表示される場合への保険
+                    try { event.target.unloadModule('captions'); } catch (e) {}
                     // --- 既存の処理 ---
                     if (typeof listenToSignals === 'function') listenToSignals();
                 },
@@ -1123,6 +1126,8 @@ window.onYouTubeIframeAPIReady = () => {
                         videoId: data.videoId, 
                         startSeconds: data.startTimeOffset || 0 
                     });
+                    // ★追加：新しい動画が読み込まれるたびに字幕を無効化
+                    try { player.unloadModule('captions'); } catch (e) {}
                     // ★追加：初回再生と2回目以降で体感時間がズレる問題への対策。
                     // 裏でミュートしたまま一瞬だけ再生してデコーダーを温めてから、0秒地点に巻き戻しておく。
                     // video-coverで画面が隠れている間に行うため、参加者には一切気づかれない。
@@ -2032,7 +2037,7 @@ window.onYouTubeIframeAPIReady = () => {
         div.innerText = `${userNameDisplay}: ${displayText}`;
         div.style.top = (Math.random() * 70 + 10) + "%"; 
         document.getElementById('screen-chat-overlay').appendChild(div);
-        setTimeout(() => div.remove(), 4000);
+        setTimeout(() => div.remove(), 6000);
     };
 
     // ★追加：1位確定時の紙吹雪演出
