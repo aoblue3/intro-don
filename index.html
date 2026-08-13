@@ -2,6 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
     <title>INTRO DON! - Deluxe Edition</title>
     <style>
@@ -9,8 +10,8 @@
         body { font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif; margin: 0; background: var(--bg-color); color: #fff; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
         
         /* セットアップ画面 */
-        #setup-screen { position: fixed; inset: 0; background: var(--bg-color); z-index: 9999; display: flex; align-items: center; justify-content: center; }
-        .setup-box { background: #fff; color: #333; padding: 40px; border-radius: 20px; text-align: center; width: 340px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+        #setup-screen { position: fixed; inset: 0; background: var(--bg-color); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box; }
+        .setup-box { background: #fff; color: #333; padding: 40px; border-radius: 20px; text-align: center; width: 340px; max-width: 100%; box-shadow: 0 10px 25px rgba(0,0,0,0.5); box-sizing: border-box; }
         .btn-join { width: 100%; padding: 12px; background: var(--primary-color); color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; transition: 0.2s; margin-bottom: 10px; }
         .admin-login-link { cursor: pointer; color: #666; font-size: 13px; margin-top: 15px; text-decoration: underline; display: block; }
 
@@ -435,6 +436,14 @@
 
             /* 主催者パネルは元々PC想定の横並びボタン群なので、はみ出さないよう折り返しのみ許可 */
             #admin-panel { flex-wrap: wrap; }
+
+            /* ★追加：入場画面（名前入力・参加ボタン）をスマホでも見やすく・押しやすく */
+            .setup-box { width: 92vw; padding: 30px 24px; border-radius: 16px; }
+            .setup-box h2 { font-size: 1.3rem; }
+            #user-name { font-size: 16px !important; padding: 14px !important; } /* 16px以上でiOSの自動ズームを防止 */
+            .btn-join { font-size: 16px; padding: 15px !important; border-radius: 10px; }
+            .admin-login-link { font-size: 15px; margin-top: 20px; }
+            #admin-close-lock { font-size: 12px !important; padding: 8px !important; }
         }
 
         /* 管理者以外にはエラーメッセージを非表示 */
