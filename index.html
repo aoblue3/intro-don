@@ -613,6 +613,7 @@
             <button id="fullscreen-btn" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">全画面</button>
             <button id="pass-btn" onclick="sendPassSignal()" style="background:#888; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">パス</button>
             <button id="my-history-btn" onclick="showMyHistory()" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">履歴</button>
+            <button id="rules-btn" onclick="showRulesModal()" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">ルール</button>
             <button id="exit-game-btn" onclick="exitGame()" style="background:#dc3545; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">退出</button>
             <div class="volume-controls">
                 <span id="mute-btn" style="cursor:pointer;">🔈</span>
@@ -1978,6 +1979,11 @@ window.onYouTubeIframeAPIReady = () => {
         flash.classList.remove('play'); void flash.offsetWidth;
         tvline.classList.remove('play'); void tvline.offsetWidth;
 
+        // ★追加：前のラウンドの動画が裏で流れっぱなしにならないよう、演出開始と同時に止める
+        try {
+            if (player && player.pauseVideo) player.pauseVideo();
+        } catch (e) {}
+
         // ★Step1：ピチュン効果音 ＋ 昔のテレビを消すような収縮演出
         playPichunSound();
         flash.classList.add('play'); // 背後を真っ黒に固定
@@ -3108,6 +3114,81 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         const closeModal = () => modalContainer.remove();
         document.getElementById('close-my-history-modal').onclick = closeModal;
         document.getElementById('close-my-history-modal-btn').onclick = closeModal;
+        modalContainer.onclick = (event) => {
+            if (event.target === modalContainer) closeModal();
+        };
+    };
+
+    /**
+     * ★追加：参加者向けのルール説明モーダル
+     */
+    window.showRulesModal = () => {
+        const oldModal = document.getElementById('rules-modal');
+        if (oldModal) oldModal.remove();
+
+        const rulesHtml = `
+            <strong style="font-size: 22px; color: #fff; border-bottom: 2px solid #555; padding-bottom: 8px; display: block; margin-bottom: 15px;">📖 ゲームルール</strong>
+
+            <b style="color: #ffcb28; font-size: 17px;">■ 基本ルール（イントロモード）</b>
+            <div style="font-size: 15px; color: #eee; line-height: 1.8; margin: 8px 0 16px 0;">
+                ・曲名またはアーティスト名を入力欄に打ち込んで送信してください。<br>
+                ・<b>早く答えるほど高得点</b>です。再生時間が経つほど、正解時の点数は下がっていきます。<br>
+                ・曲名とアーティスト名は<b>別々に正解扱い</b>になり、両方正解すると加算されます。<br>
+                ・<b>お手つき（間違った回答）は何度でもできます</b>。減点はありません。<br>
+                ・答えが近い場合は、送信時に自分だけ「<b>おしい！</b>」という表示が出ます（他の人には内容が伏せられた状態で共有されます）。<br>
+                ・自分や他の人が正解済みの内容は、答えが発表されるまで他の参加者には見えないようになっています。
+            </div>
+
+            <b style="color: #ffcb28; font-size: 17px;">■ 早解きボーナス</b>
+            <div style="font-size: 15px; color: #eee; line-height: 1.8; margin: 8px 0 16px 0;">
+                ・正解者の中で早かった順に、追加ボーナスがもらえることがあります（👑1位:+5pt / 🥈2位:+3pt / 🥉3位:+2pt）。<br>
+                ・このランキングは、主催者が結果を表示するまで分かりません。
+            </div>
+
+            <b style="color: #ffcb28; font-size: 17px;">■ エクストラワード</b>
+            <div style="font-size: 15px; color: #eee; line-height: 1.8; margin: 8px 0 16px 0;">
+                ・曲によっては、特定のキーワードを答えると<b>+5ptの追加ボーナス</b>がもらえることがあります。<br>
+                ・正解すると「⭐エクストラワード正解！」と表示されます。
+            </div>
+
+            <b style="color: #ffcb28; font-size: 17px;">■ クイズ形式について</b>
+            <div style="font-size: 15px; color: #eee; line-height: 1.8; margin: 8px 0 16px 0;">
+                ・<b>モザイクモード：</b>映像がぼかされた状態から始まり、時間とともに徐々にはっきりしていきます。<br>
+                ・<b>クイズモード：</b>曲当てではなく、出題される問題文に対してテキストで回答します。<br>
+                ・<b>選択肢クイズ／選択肢モザイク：</b>4つの選択肢ボタンから正しいものをクリックして回答します。誰がどれを選んだかは、正解発表まで他の人には分かりません。
+            </div>
+
+            <b style="color: #ffcb28; font-size: 17px;">■ その他の要素</b>
+            <div style="font-size: 15px; color: #eee; line-height: 1.8; margin: 8px 0 16px 0;">
+                ・<b>パス機能：</b>その曲に回答するのが難しい場合、パスすることができます。<br>
+                ・<b>リアクション：</b>画面右側の絵文字ボタンから、得点に関係ないリアクションを送って盛り上がれます。<br>
+                ・<b>🎰チャンスタイム：</b>まれに、その回のラウンドで獲得ポイントが<b>2倍</b>になる特別な演出が入ることがあります。<br>
+                ・<b>ブラインドモード：</b>主催者の演出により、一時的にスコアや順位が誰にも見えなくなることがあります。最終結果発表で明らかになります。
+            </div>
+
+            <div style="font-size: 13px; color: #888; margin-top: 10px; border-top: 1px solid #444; padding-top: 10px;">
+                ※ ルール内容は主催者の設定によって多少変わることがあります。
+            </div>
+        `;
+
+        const modalContainer = document.createElement('div');
+        modalContainer.id = 'rules-modal';
+        modalContainer.style = 'position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 99999; font-family: sans-serif;';
+        modalContainer.innerHTML = `
+            <div style="background: #2c2c2c; width: 90%; max-width: 560px; max-height: 85vh; overflow-y: auto; padding: 25px; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.5); position: relative; border: 1px solid #444; box-sizing: border-box;">
+                <button id="close-rules-modal" style="position: absolute; top: 12px; right: 15px; background: none; border: none; color: #aaa; font-size: 24px; cursor: pointer; padding: 0; line-height: 1;">&times;</button>
+                <div style="text-align: left; word-break: break-word;">
+                    ${rulesHtml}
+                </div>
+                <button id="close-rules-modal-btn" style="margin-top: 15px; width: 100%; padding: 12px; background: #444; border: none; color: #fff; font-size: 16px; border-radius: 6px; cursor: pointer; font-weight: bold;">閉じる</button>
+            </div>
+        `;
+
+        document.body.appendChild(modalContainer);
+
+        const closeModal = () => modalContainer.remove();
+        document.getElementById('close-rules-modal').onclick = closeModal;
+        document.getElementById('close-rules-modal-btn').onclick = closeModal;
         modalContainer.onclick = (event) => {
             if (event.target === modalContainer) closeModal();
         };
