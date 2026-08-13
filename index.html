@@ -416,7 +416,7 @@
             #sidebar-overlay.show { opacity: 1; pointer-events: auto; }
 
             #sidebar-toggle-btn {
-                display: block; position: absolute; top: 10px; right: 10px; z-index: 96;
+                display: block; position: fixed; top: 10px; right: 10px; z-index: 260000;
                 background: rgba(0,0,0,0.55); color: #fff; border: none; border-radius: 50%;
                 width: 42px; height: 42px; font-size: 20px; cursor: pointer;
             }
@@ -471,6 +471,15 @@
                 width: auto; padding: 4px; border-radius: 10px;
             }
             .reaction-btn { width: 26px; height: 26px; font-size: 12px; }
+
+            /* ★追加：縦の高さが少ないので、入力欄のボタン群は折り返さず横スクロールにする（見切れ防止） */
+            #input-area {
+                flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
+                justify-content: flex-start; padding: 6px 10px;
+            }
+            #answer-input { flex: 0 0 130px; order: 0; margin-bottom: 0; }
+            #input-area button { flex-shrink: 0; font-size: 12px !important; padding: 6px 10px !important; }
+            #input-area .volume-controls { flex-shrink: 0; min-width: 110px; }
         }
 
         /* 管理者以外にはエラーメッセージを非表示 */
@@ -635,15 +644,16 @@
     </div>
 </div>
 
+<!-- ★修正：スマホでYouTube埋め込みがz-indexを無視して前面に出てしまう問題を避けるため、video-sectionの外に配置 -->
+<button id="sidebar-toggle-btn" onclick="toggleMobileSidebar()">👥</button>
+<div id="sidebar-overlay" onclick="toggleMobileSidebar(false)"></div>
 <div id="main-game">
     <div id="video-section">
         <div id="double-round-badge">🎰 2倍ラウンド中！</div>
-        <!-- ★追加：スマホ・タブレット専用、ランキングを開閉するトグルボタン -->
-        <button id="sidebar-toggle-btn" onclick="toggleMobileSidebar()">👥</button>
-        <div id="sidebar-overlay" onclick="toggleMobileSidebar(false)"></div>
         <div id="screen-chat-overlay"></div>
         <div id="reaction-bar">
             <button class="reaction-btn" onclick="sendReaction('🔥')">🔥</button>
+
             <button class="reaction-btn" onclick="sendReaction('😭')">😭</button>
             <button class="reaction-btn" onclick="sendReaction('👏')">👏</button>
             <button class="reaction-btn" onclick="sendReaction('🤔')">🤔</button>
