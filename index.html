@@ -551,10 +551,6 @@
 </div>
 
 <div id="main-game">
-    <!-- ★追加：iPhone/iPad等の自動再生制限を解除するための、参加直後1回だけのタップ画面 -->
-    <div id="ios-unlock-overlay" style="position:fixed; inset:0; z-index:300000; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.92);">
-        <button onclick="unlockAudioForIOS()" style="background:var(--gold); color:#000; border:none; border-radius:30px; padding:22px 40px; font-size:1.3rem; font-weight:bold; cursor:pointer; box-shadow:0 0 30px rgba(255,215,0,0.6);">🔊 タップしてゲームを開始</button>
-    </div>
     <div id="video-section">
         <div id="double-round-badge">🎰 2倍ラウンド中！</div>
         <div id="screen-chat-overlay"></div>
@@ -757,9 +753,6 @@
         initYouTube();
         // ★追加：参加者なら、主催者の音声配信の待ち受けを開始する
         if (!isAdmin && typeof listenForHostVoice === 'function') listenForHostVoice();
-        // ★追加：iPhone/iPad等の自動再生制限対策として、参加直後に1回だけタップしてもらう画面を表示
-        const iosUnlockOverlay = document.getElementById('ios-unlock-overlay');
-        if (iosUnlockOverlay) iosUnlockOverlay.style.display = 'flex';
     }
 
 // --- YouTube API 初期化 (Firefox安定版) ---
@@ -828,75 +821,6 @@ window.onYouTubeIframeAPIReady = () => {
         });
     };
     // --- 修正：ここまで ---
-
-    // ★追加：Round0（全リセット直後の待機中）に流す待機用BGM
-    let isLobbyBgmPlaying = false;
-    const LOBBY_BGM_VIDEO_ID = "O42wSO-FEI8";
-
-    function startLobbyBGM() {
-        if (!player || typeof player.loadVideoById !== 'function') return;
-        if (isLobbyBgmPlaying) return; // 既に再生中なら何もしない（再読み込みで音が途切れるのを防ぐ）
-        isLobbyBgmPlaying = true;
-        try {
-            player.loadVideoById({ videoId: LOBBY_BGM_VIDEO_ID, startSeconds: 0 });
-            // ★追加：BGMなので、参加者側のミュート操作をしていない限りは聞こえる状態にしておく
-            if (!isMuted && player.unMute) player.unMute();
-            // 画面は隠したまま（video-coverは既存の仕組みでRound0中は表示され続ける）
-            // ★修正：スマホの広告誘発を避けるため、手動タップでの再生ボタンは設けない
-            // （自動再生がブロックされた場合はBGM無しになるが、広告対策を優先する）
-        } catch (e) {
-            console.error('待機BGM再生エラー:', e);
-        }
-    }
-
-    function stopLobbyBGM() {
-        if (!isLobbyBgmPlaying) return;
-        isLobbyBgmPlaying = false;
-        try {
-            if (player && player.pauseVideo) player.pauseVideo();
-        } catch (e) {}
-    }
-
-    // ★追加：iPhone/iPad(iOS Safari系)の厳しい自動再生制限を解除する。
-    // 参加直後の「1回だけのタップ」でプレイヤーを一度再生→即停止させることで、
-    // 以降はFirebase経由の自動再生（プログラムからのplayVideo）もiOSで通るようになる。
-    window.unlockAudioForIOS = () => {
-        const overlay = document.getElementById('ios-unlock-overlay');
-        const tryUnlock = (attemptsLeft) => {
-            if (player && typeof player.playVideo === 'function') {
-                try {
-                    player.mute();
-                    player.playVideo();
-                    setTimeout(() => {
-                        try {
-                            player.pauseVideo();
-                            if (!isMuted && player.unMute) player.unMute();
-                        } catch (e) {}
-                    }, 300);
-                } catch (e) {
-                    console.error('iOS音声解錠エラー:', e);
-                }
-                if (overlay) overlay.style.display = 'none';
-            } else if (attemptsLeft > 0) {
-                // プレイヤーがまだ準備できていない場合は少し待って再試行する
-                setTimeout(() => tryUnlock(attemptsLeft - 1), 300);
-            } else {
-                // 諦めてオーバーレイだけ閉じる（次善策）
-                if (overlay) overlay.style.display = 'none';
-            }
-        };
-        tryUnlock(10);
-    };
-
-    // ★追加：待機用BGMのループ処理(YouTube IFrame APIには単体ループ機能が無いため、終了検知で頭出しし直す）
-    function onPlayerStateChange(e) {
-        if (isLobbyBgmPlaying && window.YT && e.data === window.YT.PlayerState.ENDED) {
-            if (player && player.seekTo && player.playVideo) {
-                player.seekTo(0, true);
-                player.playVideo();
-            }
-        }
-    }
 
     const updateVolumeUI = (val) => {
         const ratio = quizInfo.volumeRatio || 1.0;
@@ -1024,13 +948,6 @@ window.onYouTubeIframeAPIReady = () => {
             if (videoSectionEl) videoSectionEl.classList.toggle('double-round-active', isDoubleRound);
             if (doubleRoundBadge) doubleRoundBadge.style.display = isDoubleRound ? 'block' : 'none';
 
-            // ★追加：Round0（全リセット直後の待機中）だけ、待機用BGMを流す
-            if (Number(quizInfo.round) === 0) {
-                startLobbyBGM();
-            } else {
-                stopLobbyBGM();
-            }
-
             // --- 選択肢モードのUI制御ここから追加 ---
             const choiceArea = document.getElementById('choice-container');
             const answerInput = document.getElementById('answer-input');
@@ -1089,14 +1006,11 @@ window.onYouTubeIframeAPIReady = () => {
 
             if(data.videoId && data.videoId !== lastVideoId) {
                 lastVideoId = data.videoId;
-                // ★修正：Round0（待機中）はBGM再生を優先し、プレースホルダー動画のcueで上書きしないようにする
-                if (Number(data.round) !== 0) {
-                    if (player && player.cueVideoById) {
-                        player.cueVideoById({ 
-                            videoId: data.videoId, 
-                            startSeconds: data.startTimeOffset || 0 
-                        });
-                    }
+                if (player && player.cueVideoById) {
+                    player.cueVideoById({ 
+                        videoId: data.videoId, 
+                        startSeconds: data.startTimeOffset || 0 
+                    });
                 }
                 document.getElementById('error-message').style.display = "none";
                 window.isCurrentVideoError = false;
