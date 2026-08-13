@@ -399,7 +399,7 @@
            ================================================================ */
         @media (max-width: 820px) {
             #main-game { flex-direction: column; }
-            #video-section { flex: none; height: 55vh; min-height: 220px; }
+            #video-section { flex: 1; height: auto; min-height: 0; }
 
             /* サイドバー（ランキング）は普段は右から隠れており、ボタンでスライド表示 */
             #sidebar {
@@ -444,6 +444,21 @@
             .btn-join { font-size: 16px; padding: 15px !important; border-radius: 10px; }
             .admin-login-link { font-size: 15px; margin-top: 20px; }
             #admin-close-lock { font-size: 12px !important; padding: 8px !important; }
+
+            /* ★追加：クイズの問題文が崩れないよう縮小 */
+            #quiz-question-display {
+                font-size: 1.05rem; padding: 10px 16px; max-width: 90%;
+                bottom: 12px; line-height: 1.4;
+            }
+
+            /* ★追加：カウントダウン演出をスマホの狭い映像エリアに収まるよう縮小 */
+            #countdown-container { width: 140px; height: 140px; }
+            #countdown-display { font-size: 4.2rem; }
+            #ready-text { font-size: 1.6rem !important; letter-spacing: 3px !important; }
+
+            /* ★追加：チャンスタイム演出の文字がはみ出さないよう縮小 */
+            .ct-line1 { font-size: 2rem; letter-spacing: 1px; }
+            .ct-line2 { font-size: 1.2rem; }
         }
 
         /* 管理者以外にはエラーメッセージを非表示 */
