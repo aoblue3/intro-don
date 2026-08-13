@@ -388,6 +388,55 @@
         .volume-controls { display: flex; align-items: center; gap: 8px; min-width: 140px; }
         #volume-slider { accent-color: var(--primary-color); width: 80px; cursor: pointer; }
 
+        /* ★追加：スマホ・タブレット用のランキング開閉トグルボタン（PCでは非表示） */
+        #sidebar-toggle-btn { display: none; }
+        #sidebar-overlay { display: none; }
+
+        /* ================================================================
+           ★追加：スマホ・タブレット向けレスポンシブレイアウト
+           画面幅が820px以下（縦向き・横向きどちらも対象）で発動する
+           ================================================================ */
+        @media (max-width: 820px) {
+            #main-game { flex-direction: column; }
+            #video-section { flex: none; height: 55vh; min-height: 220px; }
+
+            /* サイドバー（ランキング）は普段は右から隠れており、ボタンでスライド表示 */
+            #sidebar {
+                position: fixed; top: 0; right: 0; height: 100%; width: 78vw; max-width: 320px;
+                min-width: 0; z-index: 250; transform: translateX(100%);
+                transition: transform 0.32s cubic-bezier(.2,.8,.2,1);
+                box-shadow: -4px 0 20px rgba(0,0,0,0.6);
+            }
+            #sidebar.mobile-open { transform: translateX(0); }
+            #sidebar-overlay {
+                display: block; position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+                z-index: 240; opacity: 0; pointer-events: none; transition: opacity 0.3s ease;
+            }
+            #sidebar-overlay.show { opacity: 1; pointer-events: auto; }
+
+            #sidebar-toggle-btn {
+                display: block; position: absolute; top: 10px; right: 10px; z-index: 96;
+                background: rgba(0,0,0,0.55); color: #fff; border: none; border-radius: 50%;
+                width: 42px; height: 42px; font-size: 20px; cursor: pointer;
+            }
+
+            /* リアクションバーは縦の帯だと画面を圧迫するので、映像下に横並びで小さく配置 */
+            #reaction-bar {
+                position: static; transform: none; flex-direction: row; flex-wrap: wrap;
+                justify-content: center; gap: 4px; padding: 6px 4px; background: rgba(0,0,0,0.25);
+                order: 2;
+            }
+            .reaction-btn { width: 30px; height: 30px; font-size: 14px; }
+
+            /* 入力欄まわりのボタン群は折り返して、はみ出さないようにする */
+            #input-area { flex-wrap: wrap; padding: 10px; gap: 6px; justify-content: center; }
+            #answer-input { flex: 1 1 100%; order: -1; margin-bottom: 6px; }
+            #input-area button, #input-area .volume-controls { font-size: 13px; padding: 8px 10px !important; }
+
+            /* 主催者パネルは元々PC想定の横並びボタン群なので、はみ出さないよう折り返しのみ許可 */
+            #admin-panel { flex-wrap: wrap; }
+        }
+
         /* 管理者以外にはエラーメッセージを非表示 */
         body:not(.is-admin-mode) #error-message { display: none !important; }
         /* 選択肢ボタンの見た目 */
@@ -553,6 +602,9 @@
 <div id="main-game">
     <div id="video-section">
         <div id="double-round-badge">🎰 2倍ラウンド中！</div>
+        <!-- ★追加：スマホ・タブレット専用、ランキングを開閉するトグルボタン -->
+        <button id="sidebar-toggle-btn" onclick="toggleMobileSidebar()">👥</button>
+        <div id="sidebar-overlay" onclick="toggleMobileSidebar(false)"></div>
         <div id="screen-chat-overlay"></div>
         <div id="reaction-bar">
             <button class="reaction-btn" onclick="sendReaction('🔥')">🔥</button>
@@ -3122,6 +3174,18 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
     /**
      * ★追加：参加者向けのルール説明モーダル
      */
+    /**
+     * ★追加：スマホ・タブレット用、ランキングサイドバーの開閉トグル
+     */
+    window.toggleMobileSidebar = (forceState) => {
+        const sidebar = document.getElementById('sidebar');
+        const overlay = document.getElementById('sidebar-overlay');
+        if (!sidebar || !overlay) return;
+        const shouldOpen = (typeof forceState === 'boolean') ? forceState : !sidebar.classList.contains('mobile-open');
+        sidebar.classList.toggle('mobile-open', shouldOpen);
+        overlay.classList.toggle('show', shouldOpen);
+    };
+
     window.showRulesModal = () => {
         const oldModal = document.getElementById('rules-modal');
         if (oldModal) oldModal.remove();
@@ -3133,7 +3197,7 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
             <div style="font-size: 15px; color: #eee; line-height: 1.8; margin: 8px 0 16px 0;">
                 ・曲名またはアーティスト名を入力欄に打ち込んで送信してください。<br>
                 ・<b>早く答えるほど高得点</b>です。再生時間が経つほど、正解時の点数は下がっていきます。<br>
-                ・曲名とアーティスト名は<b>別々に正解扱い</b>になり、両方正解すると加算されます。<br>
+                ・曲名とアーティスト名は<b>別々に正解判定</b>されます。アーティスト名を先に当てても得点は入りますが、本命はあくまで曲名です。曲名まで正解すると、そのラウンドで獲得できる<b>最大得点</b>に到達します。<br>
                 ・<b>お手つき（間違った回答）は何度でもできます</b>。減点はありません。<br>
                 ・答えが近い場合は、送信時に自分だけ「<b>おしい！</b>」という表示が出ます（他の人には内容が伏せられた状態で共有されます）。<br>
                 ・自分や他の人が正解済みの内容は、答えが発表されるまで他の参加者には見えないようになっています。
@@ -3147,7 +3211,8 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
 
             <b style="color: #ffcb28; font-size: 17px;">■ エクストラワード</b>
             <div style="font-size: 15px; color: #eee; line-height: 1.8; margin: 8px 0 16px 0;">
-                ・曲によっては、特定のキーワードを答えると<b>+5ptの追加ボーナス</b>がもらえることがあります。<br>
+                ・曲名に加えてエクストラワードが設定されている場合、<b>最初の回答でエクストラワードを言い当てる</b>ことで+5ptのボーナスが入ります。<br>
+                ・曲名を通常の言い方で先に正解してしまうと、その後からエクストラワードを送っても加算されません。ボーナスを狙うなら、<b>一発目の回答が勝負</b>です。<br>
                 ・正解すると「⭐エクストラワード正解！」と表示されます。
             </div>
 
@@ -3164,6 +3229,15 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                 ・<b>リアクション：</b>画面右側の絵文字ボタンから、得点に関係ないリアクションを送って盛り上がれます。<br>
                 ・<b>🎰チャンスタイム：</b>まれに、その回のラウンドで獲得ポイントが<b>2倍</b>になる特別な演出が入ることがあります。<br>
                 ・<b>ブラインドモード：</b>主催者の演出により、一時的にスコアや順位が誰にも見えなくなることがあります。最終結果発表で明らかになります。
+            </div>
+
+            <b style="color: #ff8a80; font-size: 17px;">■ アニソンイントロドンについて</b>
+            <div style="font-size: 15px; color: #eee; line-height: 1.8; margin: 8px 0 16px 0;">
+                今回の大会は「アニソンイントロドン」形式で開催します。通常ルールと正解の対象が異なるのでご注意ください。<br><br>
+                ・正解として扱われるのは曲名ではなく、その曲が使われている<b>アニメ作品のタイトル</b>です。<br>
+                ・アニメタイトルの<b>略称</b>（略した呼び方）も正解になる場合があります。<br>
+                ・曲名自体は<b>エクストラワード</b>扱いになります。最初の回答で曲名を言い当てると、通常のエクストラワードと同じく+5ptのボーナスが入ります。<br>
+                ・つまり基本はアニメタイトルを当てて得点を取り、狙うなら最初の回答で曲名まで一発で当てて追加ボーナスを狙う、という流れになります。
             </div>
 
             <div style="font-size: 13px; color: #888; margin-top: 10px; border-top: 1px solid #444; padding-top: 10px;">
