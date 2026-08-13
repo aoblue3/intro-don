@@ -7,7 +7,7 @@
     <title>INTRO DON! - Deluxe Edition</title>
     <style>
         :root { --primary-color: #007bff; --admin-color: #ff4757; --bg-color: #0f0f0f; --gold: #ffd700; --my-name-color: #00d4ff; --success-green: #28a745; }
-        body { font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif; margin: 0; background: var(--bg-color); color: #fff; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        body { font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif; margin: 0; background: var(--bg-color); color: #fff; display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; }
         
         /* セットアップ画面 */
         #setup-screen { position: fixed; inset: 0; background: var(--bg-color); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box; }
@@ -382,7 +382,7 @@
         .crown { color: var(--gold); margin-right: 4px; }
         .correct-mark { background: var(--success-green); color: white; font-size: 10px; padding: 2px 5px; border-radius: 4px; margin-left: 5px; }
 
-        #input-area { padding: 15px; background: #1a1a1a; display: flex; gap: 10px; border-top: 1px solid #333; align-items: center; z-index: 70; position: relative; }
+        #input-area { padding: 15px; background: #1a1a1a; display: flex; gap: 10px; border-top: 1px solid #333; align-items: center; z-index: 70; position: relative; flex-shrink: 0; }
         #answer-input { flex: 1; padding: 12px 20px; border-radius: 25px; border: 2px solid #444; background: #333; color: #fff; outline: none; }
         #result-notice { position: absolute; top: -30px; left: 20px; font-weight: bold; display: none; z-index: 80; }
         
