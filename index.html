@@ -462,6 +462,17 @@
             .ct-line2 { font-size: 1.2rem; }
         }
 
+        /* ★追加：スマホ横向き（landscape）専用の調整。縦の高さが少ないので、リアクションは右端に縦の帯として戻す */
+        @media (max-width: 820px) and (orientation: landscape) {
+            #reaction-bar {
+                top: 50%; bottom: auto; left: auto; right: 6px; transform: translateY(-50%);
+                flex-direction: column; flex-wrap: nowrap;
+                max-height: 92%; overflow-y: auto;
+                width: auto; padding: 4px; border-radius: 10px;
+            }
+            .reaction-btn { width: 26px; height: 26px; font-size: 12px; }
+        }
+
         /* 管理者以外にはエラーメッセージを非表示 */
         body:not(.is-admin-mode) #error-message { display: none !important; }
         /* 選択肢ボタンの見た目 */
