@@ -40,6 +40,14 @@
         #click-guard { position: absolute; inset: 0; z-index: 15; background: transparent; }
         #video-cover { position: absolute; inset: 0; background: radial-gradient(circle, #222 0%, #000 100%); z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 
+        /* ★追加：正解時などに画面中央に出る大きな通知（スマホでも折り返せるようクラス化） */
+        .center-notify {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            font-size: 3rem; z-index: 10000; background-color: rgba(0,0,0,0.8);
+            padding: 20px; border-radius: 15px; white-space: nowrap;
+            max-width: 90%; text-align: center; font-weight: bold;
+        }
+
         /* 問題文表示エリア */
         #quiz-question-display {
             position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%);
@@ -460,6 +468,11 @@
             /* ★追加：チャンスタイム演出の文字がはみ出さないよう縮小 */
             .ct-line1 { font-size: 2rem; letter-spacing: 1px; }
             .ct-line2 { font-size: 1.2rem; }
+
+            /* ★追加：正解時の中央通知（正解！○○ptなど）が画面からはみ出さないよう折り返し・縮小 */
+            .center-notify {
+                font-size: 1.5rem; white-space: normal; padding: 14px 18px; max-width: 85%;
+            }
         }
 
         /* ★追加：スマホ横向き（landscape）専用の調整。縦の高さが少ないので、リアクションは右端に縦の帯として戻す */
@@ -1983,7 +1996,7 @@ window.onYouTubeIframeAPIReady = () => {
         });
     };
     const showNotice = (t, c) => { const n = document.getElementById('result-notice'); n.innerText = t; n.style.color = c; n.style.display = "block"; };
-    const showCenterNotify = (t, c) => { const p = document.getElementById('video-section'); if(!p) return; const n = document.createElement('div'); n.innerText = t; Object.assign(n.style, { position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontSize: '3rem', zIndex: '10000', backgroundColor: 'rgba(0,0,0,0.8)', color: c, padding: '20px', borderRadius: '15px', whiteSpace: 'nowrap' }); p.appendChild(n); setTimeout(() => n.remove(), 2000); };
+    const showCenterNotify = (t, c) => { const p = document.getElementById('video-section'); if(!p) return; const n = document.createElement('div'); n.innerText = t; n.className = 'center-notify'; n.style.color = c; p.appendChild(n); setTimeout(() => n.remove(), 2000); };
     const showDanmaku = (m) => {
         // パス信号の場合、主催者以外には何も表示せず終了する
         if (m.isPass && !isAdmin) return;
