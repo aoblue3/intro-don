@@ -421,13 +421,14 @@
                 width: 42px; height: 42px; font-size: 20px; cursor: pointer;
             }
 
-            /* リアクションバーは縦の帯だと画面を圧迫するので、映像下に横並びで小さく配置 */
+            /* ★修正：常時flowに置くと高さが足りず画面外にはみ出すため、動画の上に浮かせる形に戻し、位置とサイズだけ調整 */
             #reaction-bar {
-                position: static; transform: none; flex-direction: row; flex-wrap: wrap;
-                justify-content: center; gap: 4px; padding: 6px 4px; background: rgba(0,0,0,0.25);
-                order: 2;
+                position: absolute; top: auto; bottom: 8px; left: 6px; right: 6px; transform: none;
+                flex-direction: row; flex-wrap: wrap;
+                justify-content: center; gap: 4px; padding: 5px; background: rgba(0,0,0,0.35);
+                border-radius: 10px; z-index: 90;
             }
-            .reaction-btn { width: 30px; height: 30px; font-size: 14px; }
+            .reaction-btn { width: 28px; height: 28px; font-size: 13px; }
 
             /* 入力欄まわりのボタン群は折り返して、はみ出さないようにする */
             #input-area { flex-wrap: wrap; padding: 10px; gap: 6px; justify-content: center; }
