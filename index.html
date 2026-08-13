@@ -1011,6 +1011,25 @@ window.onYouTubeIframeAPIReady = () => {
                         videoId: data.videoId, 
                         startSeconds: data.startTimeOffset || 0 
                     });
+                    // ★追加：初回再生と2回目以降で体感時間がズレる問題への対策。
+                    // 裏でミュートしたまま一瞬だけ再生してデコーダーを温めてから、0秒地点に巻き戻しておく。
+                    // video-coverで画面が隠れている間に行うため、参加者には一切気づかれない。
+                    setTimeout(() => {
+                        try {
+                            if (player && player.mute && player.playVideo) {
+                                player.mute();
+                                player.playVideo();
+                                setTimeout(() => {
+                                    try {
+                                        player.pauseVideo();
+                                        player.seekTo(data.startTimeOffset || 0, true);
+                                    } catch (e) {}
+                                }, 400);
+                            }
+                        } catch (e) {
+                            console.error('ウォームアップ再生エラー:', e);
+                        }
+                    }, 300); // cueVideoById直後はまだ準備が整っていないことがあるため少し待つ
                 }
                 document.getElementById('error-message').style.display = "none";
                 window.isCurrentVideoError = false;
