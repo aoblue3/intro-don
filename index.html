@@ -551,6 +551,10 @@
 </div>
 
 <div id="main-game">
+    <!-- ★追加：iPhone/iPad等の自動再生制限を解除するための、参加直後1回だけのタップ画面 -->
+    <div id="ios-unlock-overlay" style="position:fixed; inset:0; z-index:300000; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.92);">
+        <button onclick="unlockAudioForIOS()" style="background:var(--gold); color:#000; border:none; border-radius:30px; padding:22px 40px; font-size:1.3rem; font-weight:bold; cursor:pointer; box-shadow:0 0 30px rgba(255,215,0,0.6);">🔊 タップしてゲームを開始</button>
+    </div>
     <div id="video-section">
         <div id="double-round-badge">🎰 2倍ラウンド中！</div>
         <div id="screen-chat-overlay"></div>
@@ -753,6 +757,9 @@
         initYouTube();
         // ★追加：参加者なら、主催者の音声配信の待ち受けを開始する
         if (!isAdmin && typeof listenForHostVoice === 'function') listenForHostVoice();
+        // ★追加：iPhone/iPad等の自動再生制限対策として、参加直後に1回だけタップしてもらう画面を表示
+        const iosUnlockOverlay = document.getElementById('ios-unlock-overlay');
+        if (iosUnlockOverlay) iosUnlockOverlay.style.display = 'flex';
     }
 
 // --- YouTube API 初期化 (Firefox安定版) ---
@@ -849,6 +856,37 @@ window.onYouTubeIframeAPIReady = () => {
             if (player && player.pauseVideo) player.pauseVideo();
         } catch (e) {}
     }
+
+    // ★追加：iPhone/iPad(iOS Safari系)の厳しい自動再生制限を解除する。
+    // 参加直後の「1回だけのタップ」でプレイヤーを一度再生→即停止させることで、
+    // 以降はFirebase経由の自動再生（プログラムからのplayVideo）もiOSで通るようになる。
+    window.unlockAudioForIOS = () => {
+        const overlay = document.getElementById('ios-unlock-overlay');
+        const tryUnlock = (attemptsLeft) => {
+            if (player && typeof player.playVideo === 'function') {
+                try {
+                    player.mute();
+                    player.playVideo();
+                    setTimeout(() => {
+                        try {
+                            player.pauseVideo();
+                            if (!isMuted && player.unMute) player.unMute();
+                        } catch (e) {}
+                    }, 300);
+                } catch (e) {
+                    console.error('iOS音声解錠エラー:', e);
+                }
+                if (overlay) overlay.style.display = 'none';
+            } else if (attemptsLeft > 0) {
+                // プレイヤーがまだ準備できていない場合は少し待って再試行する
+                setTimeout(() => tryUnlock(attemptsLeft - 1), 300);
+            } else {
+                // 諦めてオーバーレイだけ閉じる（次善策）
+                if (overlay) overlay.style.display = 'none';
+            }
+        };
+        tryUnlock(10);
+    };
 
     // ★追加：待機用BGMのループ処理(YouTube IFrame APIには単体ループ機能が無いため、終了検知で頭出しし直す）
     function onPlayerStateChange(e) {
