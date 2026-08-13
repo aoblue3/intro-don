@@ -600,7 +600,7 @@
                     <div id="countdown-display"></div>
                 </div>
                 <div id="ready-text" style="font-size:2.5rem; font-weight:bold; letter-spacing:5px;">READY?</div>
-                <button id="bgm-enable-btn" onclick="enableLobbyBGM()" style="display:none; margin-top:15px; background:var(--gold); color:#000; border:none; border-radius:20px; padding:10px 20px; font-weight:bold; cursor:pointer;">🎵 タップしてBGMを再生</button>
+                <!-- BGM手動再生ボタンは、スマホでの広告誘発を防ぐため撤去しました -->
             </div>
             <!-- 動画再生の手動有効化ボタンは、カンニング防止のため撤去しました -->
             <div id="player"></div>
@@ -835,17 +835,8 @@ window.onYouTubeIframeAPIReady = () => {
             // ★追加：BGMなので、参加者側のミュート操作をしていない限りは聞こえる状態にしておく
             if (!isMuted && player.unMute) player.unMute();
             // 画面は隠したまま（video-coverは既存の仕組みでRound0中は表示され続ける）
-
-            // ★追加：スマホ等で自動再生がブロックされていないか少し待ってから確認し、
-            // ブロックされていたら手動で有効化してもらうボタンを表示する
-            setTimeout(() => {
-                if (!isLobbyBgmPlaying) return; // その間に停止された場合は何もしない
-                const state = player.getPlayerState ? player.getPlayerState() : null;
-                const enableBtn = document.getElementById('bgm-enable-btn');
-                if (state !== 1 && enableBtn) { // 1 = YT.PlayerState.PLAYING
-                    enableBtn.style.display = 'inline-block';
-                }
-            }, 900);
+            // ★修正：スマホの広告誘発を避けるため、手動タップでの再生ボタンは設けない
+            // （自動再生がブロックされた場合はBGM無しになるが、広告対策を優先する）
         } catch (e) {
             console.error('待機BGM再生エラー:', e);
         }
@@ -857,22 +848,7 @@ window.onYouTubeIframeAPIReady = () => {
         try {
             if (player && player.pauseVideo) player.pauseVideo();
         } catch (e) {}
-        const enableBtn = document.getElementById('bgm-enable-btn');
-        if (enableBtn) enableBtn.style.display = 'none';
     }
-
-    // ★追加：自動再生がブロックされた場合に、タップで確実にBGMを再生させる
-    window.enableLobbyBGM = () => {
-        if (!player) return;
-        try {
-            if (player.unMute && !isMuted) player.unMute();
-            if (player.playVideo) player.playVideo();
-        } catch (e) {
-            console.error('BGM手動再生エラー:', e);
-        }
-        const enableBtn = document.getElementById('bgm-enable-btn');
-        if (enableBtn) enableBtn.style.display = 'none';
-    };
 
     // ★追加：待機用BGMのループ処理(YouTube IFrame APIには単体ループ機能が無いため、終了検知で頭出しし直す）
     function onPlayerStateChange(e) {
@@ -881,11 +857,6 @@ window.onYouTubeIframeAPIReady = () => {
                 player.seekTo(0, true);
                 player.playVideo();
             }
-        }
-        // ★追加：BGM再生中に実際に再生開始できたら、有効化ボタンを念のため隠す
-        if (isLobbyBgmPlaying && window.YT && e.data === window.YT.PlayerState.PLAYING) {
-            const enableBtn = document.getElementById('bgm-enable-btn');
-            if (enableBtn) enableBtn.style.display = 'none';
         }
     }
 
