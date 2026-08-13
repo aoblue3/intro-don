@@ -1919,8 +1919,11 @@ window.onYouTubeIframeAPIReady = () => {
         const normIn = clean(text);
         const titleCandidates = quizInfo.title.split('.').map(c => clean(c));
         const artistCandidates = quizInfo.artist.split('.').map(c => clean(c));
-        // ★追加：エクストラワードとの完全一致判定（イントロモードのみ）
-        const isExtraWordMatch = !!(!quizInfo.isQuizMode && quizInfo.extraWord && clean(quizInfo.extraWord) === normIn);
+        // ★修正：エクストラワードも曲名・アーティスト名と同じく「.」区切りで複数候補に対応
+        const extraWordCandidates = (!quizInfo.isQuizMode && quizInfo.extraWord)
+            ? quizInfo.extraWord.split('.').map(c => clean(c))
+            : [];
+        const isExtraWordMatch = extraWordCandidates.some(c => c !== "" && c === normIn);
         const isTitle = titleCandidates.some(c => c !== "" && c === normIn) || isExtraWordMatch;
         const isArtist = artistCandidates.some(c => c !== "" && c === normIn);
 
@@ -1938,9 +1941,8 @@ window.onYouTubeIframeAPIReady = () => {
                 }
                 return 1 - d[l1][l2] / Math.max(l1, l2);
             };
-            // ★修正：エクストラワードも「おしい」判定の対象に含める（近い回答が他参加者に丸見えにならないようにする）
-            const extraWordCandidate = (!quizInfo.isQuizMode && quizInfo.extraWord) ? clean(quizInfo.extraWord) : "";
-            const isNear = [...titleCandidates, ...artistCandidates, extraWordCandidate].some(c => c !== "" && getSim(c, normIn) >= 0.7);
+            // ★修正：エクストラワードも「おしい」判定の対象に含める（複数候補すべてをチェック）
+            const isNear = [...titleCandidates, ...artistCandidates, ...extraWordCandidates].some(c => c !== "" && getSim(c, normIn) >= 0.7);
             if (isNear) {
                 showNotice("おしい！", "#ffa500");
                 pushChat(text, false, false, true); 
