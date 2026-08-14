@@ -23,7 +23,7 @@
         #admin-seekbar { flex: 1; min-width: 150px; cursor: pointer; }
 
         /* 問題追加モーダル */
-        #q-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 10001; align-items: center; justify-content: center; }
+        #q-modal, #poll-create-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 10001; align-items: center; justify-content: center; }
         .q-modal-box { background: #222; padding: 25px; border-radius: 15px; width: 400px; border: 1px solid var(--admin-color); }
         .q-modal-box h3 { margin-top: 0; color: var(--admin-color); }
         .q-input-group { margin-bottom: 15px; }
@@ -151,6 +151,33 @@
             100% { box-shadow: 0 0 30px rgba(255,215,0,0.4); }
         }
         .champion-glow-active { animation: champion-glow 1.1s infinite; }
+
+        /* ★追加：アンケート表示パネル */
+        #poll-panel {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 88%; max-width: 560px; max-height: 82vh; display: none; z-index: 115;
+            border: 3px solid var(--primary-color); background: rgba(10,10,20,0.96);
+            border-radius: 20px; padding: 24px; box-shadow: 0 0 60px rgba(0,123,255,0.4);
+            overflow-y: auto;
+        }
+        #poll-timer-bar { width: 100%; height: 6px; background: #333; border-radius: 3px; overflow: hidden; margin-bottom: 16px; }
+        #poll-timer-fill { height: 100%; width: 100%; background: var(--primary-color); transition: width 1s linear; }
+        #poll-question { font-size: 1.3rem; font-weight: bold; text-align: center; margin-bottom: 18px; color: #fff; }
+        #poll-options { display: flex; flex-direction: column; gap: 10px; }
+        .poll-option-btn {
+            position: relative; overflow: hidden; text-align: left; padding: 14px 18px;
+            border-radius: 10px; border: 2px solid #444; background: #222; color: #fff;
+            font-size: 1.05rem; cursor: pointer; transition: border-color 0.2s ease;
+        }
+        .poll-option-btn:hover { border-color: var(--primary-color); }
+        .poll-option-btn.selected { border-color: var(--gold); box-shadow: 0 0 12px rgba(255,215,0,0.5); }
+        .poll-option-btn:disabled { cursor: default; }
+        .poll-option-bar {
+            position: absolute; top: 0; left: 0; height: 100%; background: rgba(0,123,255,0.35);
+            width: 0%; transition: width 0.8s ease; z-index: 0;
+        }
+        .poll-option-label { position: relative; z-index: 1; display: flex; justify-content: space-between; }
+        .poll-option-pct { font-weight: bold; color: var(--gold); }
 
         /* ★追加：チャンスタイムボタンの虹色グラデーション常時点滅 */
         @keyframes chance-btn-gradient {
@@ -575,6 +602,7 @@
         ｜ <button class="admin-btn" id="btn-export-log" style="background:#17a2b8">📄 全ログ出力</button>
         ｜ <button class="admin-btn" id="btn-final-results" style="background:linear-gradient(45deg, var(--gold), #ff9800); color:#000; font-weight:bold;">🏆 最終結果発表</button>
         ｜ <button class="admin-btn" id="btn-blind-mode" style="background:#333">🙈 ブラインドモード OFF</button>
+        ｜ <button class="admin-btn" id="btn-open-poll" style="background:#17a2b8">📊 アンケート</button>
         ｜ <input type="range" id="admin-seekbar" min="0" max="100" value="0">
         <span id="admin-time-display" style="color:#0f0; font-size:12px; font-family:monospace; min-width:35px;">0:00</span>
     </div>
@@ -657,6 +685,29 @@
     </div>
 </div>
 
+<!-- ★追加：アンケート作成モーダル -->
+<div id="poll-create-modal">
+    <div class="q-modal-box">
+        <h3>📊 アンケートを作成</h3>
+        <div class="q-input-group">
+            <label>アンケートの内容（質問文）</label>
+            <input type="text" id="poll-question-input" placeholder="例：次はどのジャンルの曲が良い？">
+        </div>
+        <div id="poll-option-inputs">
+            <div class="q-input-group"><label>選択肢A</label><input type="text" class="poll-option-input" placeholder="選択肢A"></div>
+            <div class="q-input-group"><label>選択肢B</label><input type="text" class="poll-option-input" placeholder="選択肢B"></div>
+        </div>
+        <div class="q-modal-btns">
+            <button class="admin-btn" id="btn-poll-add-option" style="flex:1; background:#555;">＋選択肢を追加</button>
+            <button class="admin-btn" id="btn-poll-remove-option" style="flex:1; background:#555;">－選択肢を減らす</button>
+        </div>
+        <div class="q-modal-btns">
+            <button class="admin-btn" id="btn-poll-start" style="flex:1; background:var(--primary-color);">アンケート開始</button>
+            <button class="admin-btn" id="btn-poll-cancel" style="flex:1; background:#666;">キャンセル</button>
+        </div>
+    </div>
+</div>
+
 <!-- ★修正：スマホでYouTube埋め込みがz-indexを無視して前面に出てしまう問題を避けるため、video-sectionの外に配置 -->
 <button id="sidebar-toggle-btn" onclick="toggleMobileSidebar()">👥</button>
 <div id="sidebar-overlay" onclick="toggleMobileSidebar(false)"></div>
@@ -698,6 +749,12 @@
             <div style="text-align:center; color:var(--gold); font-weight:bold; font-size:1.6rem; border-bottom:2px solid var(--gold); padding-bottom:10px; margin-bottom:15px; text-shadow:0 0 15px var(--gold);">🏆 FINAL RESULTS 🏆</div>
             <div id="final-titles-list" style="margin-bottom:10px;"></div>
             <div id="final-rank-list"></div>
+        </div>
+        <!-- ★追加：アンケート表示パネル -->
+        <div id="poll-panel">
+            <div id="poll-timer-bar"><div id="poll-timer-fill"></div></div>
+            <div id="poll-question"></div>
+            <div id="poll-options"></div>
         </div>
         <div id="player-wrapper">
             <div id="click-guard"></div>
@@ -1445,6 +1502,18 @@ window.onYouTubeIframeAPIReady = () => {
             if (btn) {
                 btn.innerText = blindModeActive ? "🙈 ブラインドモード ON" : "🙈 ブラインドモード OFF";
                 btn.style.background = blindModeActive ? "#e91e63" : "#333";
+            }
+        });
+
+        // ★追加：アンケートの状態を監視し、全員の画面に表示する
+        onValue(ref(db, 'game/poll'), (snap) => {
+            const pollData = snap.val();
+            if (pollData && pollData.question) {
+                renderPollPanel(pollData);
+            } else {
+                const panel = document.getElementById('poll-panel');
+                if (panel) panel.style.display = 'none';
+                if (window.pollTimerInterval) clearInterval(window.pollTimerInterval);
             }
         });
 
@@ -2574,6 +2643,91 @@ async function renderRanking() {
         }
     }
 
+    // ★追加：アンケートパネルの表示（全クライアント共通）
+    let lastRenderedPollStartTime = null;
+    async function renderPollPanel(pollData) {
+        const panel = document.getElementById('poll-panel');
+        const questionEl = document.getElementById('poll-question');
+        const optionsEl = document.getElementById('poll-options');
+        const timerFill = document.getElementById('poll-timer-fill');
+        if (!panel || !questionEl || !optionsEl || !timerFill) return;
+
+        // 同じアンケートを何度も再描画しないようにする（投票済みボタンが消えないように）
+        const isNewPoll = lastRenderedPollStartTime !== pollData.startTime;
+        lastRenderedPollStartTime = pollData.startTime;
+
+        panel.style.display = 'block';
+        questionEl.innerText = pollData.question;
+
+        if (isNewPoll) {
+            optionsEl.innerHTML = '';
+            pollData.options.forEach((opt, idx) => {
+                const btn = document.createElement('button');
+                btn.className = 'poll-option-btn';
+                btn.dataset.index = idx;
+                btn.innerHTML = `<div class="poll-option-bar"></div><div class="poll-option-label"><span>${opt}</span><span class="poll-option-pct"></span></div>`;
+                btn.onclick = () => submitPollVote(idx);
+                optionsEl.appendChild(btn);
+            });
+        }
+
+        if (window.pollTimerInterval) clearInterval(window.pollTimerInterval);
+
+        const tick = () => {
+            const elapsed = (Date.now() - pollData.startTime) / 1000;
+            const remaining = Math.max(0, pollData.duration - elapsed);
+            timerFill.style.width = `${(remaining / pollData.duration) * 100}%`;
+            if (remaining <= 0) {
+                clearInterval(window.pollTimerInterval);
+                revealPollResults(pollData);
+            }
+        };
+        tick();
+        window.pollTimerInterval = setInterval(tick, 500);
+    }
+
+    // ★追加：アンケートへの投票を送信する（一人一票、投票後はボタンを固定表示にする）
+    window.submitPollVote = async (optionIndex) => {
+        if (!myId) return;
+        const optionsEl = document.getElementById('poll-options');
+        if (optionsEl) {
+            optionsEl.querySelectorAll('.poll-option-btn').forEach(b => {
+                b.disabled = true;
+                b.classList.toggle('selected', Number(b.dataset.index) === optionIndex);
+            });
+        }
+        try {
+            await set(ref(db, `game/poll_votes/${myId}`), optionIndex);
+        } catch (e) {
+            console.error('投票エラー:', e);
+        }
+    };
+
+    // ★追加：アンケート終了時、集計結果をパーセントで表示する
+    async function revealPollResults(pollData) {
+        try {
+            const votesSnap = await get(ref(db, 'game/poll_votes'));
+            const votes = votesSnap.exists() ? Object.values(votesSnap.val()) : [];
+            const counts = pollData.options.map(() => 0);
+            votes.forEach(v => { if (counts[v] !== undefined) counts[v]++; });
+            const total = counts.reduce((a, b) => a + b, 0);
+
+            const optionsEl = document.getElementById('poll-options');
+            if (!optionsEl) return;
+            optionsEl.querySelectorAll('.poll-option-btn').forEach(btn => {
+                const idx = Number(btn.dataset.index);
+                const pct = total > 0 ? Math.round((counts[idx] / total) * 100) : 0;
+                btn.disabled = true;
+                const bar = btn.querySelector('.poll-option-bar');
+                const pctEl = btn.querySelector('.poll-option-pct');
+                if (bar) bar.style.width = `${pct}%`;
+                if (pctEl) pctEl.innerText = `${pct}%（${counts[idx]}票）`;
+            });
+        } catch (e) {
+            console.error('アンケート集計エラー:', e);
+        }
+    }
+
     // ★追加：最終結果発表（全員のスコアを集計し、下位から順にゆっくり発表する）
     // ★追加：チャット・リアクション・履歴データから特別称号を集計する（最終結果発表時に一度だけ実行）
     async function computeTitles(users) {
@@ -3058,6 +3212,60 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                 quizInputs.style.display = 'block';
                 artistGroup.style.display = 'none';
                 if (choiceInputs) choiceInputs.style.display = 'block'; // ★表示する！
+            }
+        };
+
+        // ★追加：アンケート機能のUI操作
+        const pollCreateModal = document.getElementById('poll-create-modal');
+        const pollOptionInputs = document.getElementById('poll-option-inputs');
+        const MAX_POLL_OPTIONS = 6;
+        const MIN_POLL_OPTIONS = 2;
+        const pollOptionLetters = ['A', 'B', 'C', 'D', 'E', 'F'];
+
+        document.getElementById('btn-open-poll').onclick = () => {
+            if (pollCreateModal) pollCreateModal.style.display = 'flex';
+        };
+        document.getElementById('btn-poll-cancel').onclick = () => {
+            if (pollCreateModal) pollCreateModal.style.display = 'none';
+        };
+        document.getElementById('btn-poll-add-option').onclick = () => {
+            const current = pollOptionInputs.querySelectorAll('.poll-option-input').length;
+            if (current >= MAX_POLL_OPTIONS) { alert(`選択肢は最大${MAX_POLL_OPTIONS}個までです`); return; }
+            const letter = pollOptionLetters[current] || String(current + 1);
+            const group = document.createElement('div');
+            group.className = 'q-input-group';
+            group.innerHTML = `<label>選択肢${letter}</label><input type="text" class="poll-option-input" placeholder="選択肢${letter}">`;
+            pollOptionInputs.appendChild(group);
+        };
+        document.getElementById('btn-poll-remove-option').onclick = () => {
+            const groups = pollOptionInputs.querySelectorAll('.q-input-group');
+            if (groups.length <= MIN_POLL_OPTIONS) { alert(`選択肢は最低${MIN_POLL_OPTIONS}個必要です`); return; }
+            groups[groups.length - 1].remove();
+        };
+
+        document.getElementById('btn-poll-start').onclick = async () => {
+            const question = document.getElementById('poll-question-input').value.trim();
+            const optionEls = Array.from(pollOptionInputs.querySelectorAll('.poll-option-input'));
+            const options = optionEls.map(el => el.value.trim()).filter(v => v !== '');
+
+            if (!question) { alert('アンケートの内容を入力してください'); return; }
+            if (options.length < MIN_POLL_OPTIONS) { alert(`選択肢を${MIN_POLL_OPTIONS}個以上入力してください`); return; }
+
+            try {
+                // 前回の投票データを消してから新しいアンケートを開始
+                await remove(ref(db, 'game/poll_votes'));
+                await set(ref(db, 'game/poll'), {
+                    question,
+                    options,
+                    startTime: Date.now(),
+                    duration: 20, // 秒
+                });
+                if (pollCreateModal) pollCreateModal.style.display = 'none';
+                document.getElementById('poll-question-input').value = '';
+                optionEls.forEach(el => el.value = '');
+            } catch (e) {
+                console.error('アンケート開始エラー:', e);
+                alert('アンケートの開始に失敗しました');
             }
         };
 
