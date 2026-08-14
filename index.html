@@ -416,6 +416,12 @@
         
         .crown { color: var(--gold); margin-right: 4px; }
         .correct-mark { background: var(--success-green); color: white; font-size: 10px; padding: 2px 5px; border-radius: 4px; margin-left: 5px; }
+        /* ★追加：エクストラワード正解専用の目立つバッジ */
+        .ex-correct-mark {
+            background: linear-gradient(45deg, #ff0080, var(--gold));
+            color: #000; font-weight: bold; text-shadow: none;
+            box-shadow: 0 0 6px rgba(255,215,0,0.7);
+        }
 
         #input-area { padding: 15px; background: #1a1a1a; display: flex; gap: 10px; border-top: 1px solid #333; align-items: center; z-index: 70; position: relative; flex-shrink: 0; }
         #answer-input { flex: 1; padding: 12px 20px; border-radius: 25px; border: 2px solid #444; background: #333; color: #fff; outline: none; }
@@ -1609,7 +1615,12 @@ window.onYouTubeIframeAPIReady = () => {
                 const crown = isTop ? '<span class="crown">👑</span>' : '';
                 
                 // 消えてしまっていた正解マークの行もここに復活させて安全に合流させます
-                const correctMark = ((isAdmin || isRevealedGlobal) && u.hasCorrectedTitle) ? '<span class="correct-mark">正解</span>' : '';
+                // ★修正：エクストラワード正解の場合は専用の「EX正解」バッジを、通常正解時は今まで通り「正解」を表示する
+                const correctMark = ((isAdmin || isRevealedGlobal) && u.hasCorrectedTitle)
+                    ? (u.hasCorrectedByExtra
+                        ? '<span class="correct-mark ex-correct-mark">EX正解</span>'
+                        : '<span class="correct-mark">正解</span>')
+                    : '';
                 
                 // ★修正：アーティスト正解マークの行を新設（「正解」マークの右隣に並びます。色などを変えたい場合はクラス名でCSS調整可能です）
                 const artistCorrectMark = ((isAdmin || isRevealedGlobal) && u.hasCorrectedArtist) ? '<span class="artist-correct-mark" style="color: #ffca28; font-size: 10px; margin-left: 5px; font-weight: bold; border: 1px solid #ffca28; padding: 1px 3px; border-radius: 3px;">アーティスト正解</span>' : '';
@@ -1936,6 +1947,8 @@ window.onYouTubeIframeAPIReady = () => {
                         score: increment(addedPoints), // ★ここを基礎点(10pt等)のみにする
                         hasCorrectedTitle: addedPoints > 0 ? true : hasCorrectedTitle,
                         hasPointedTitle: addedPoints > 0 ? true : hasPointedTitle,
+                        // ★追加：エクストラワード正解だったかどうかをサイドバー表示用に記録する
+                        hasCorrectedByExtra: addedPoints > 0 ? !!isExtra : false,
                         isQuizModeRound: quizInfo.isQuizMode ? true : false,
                         savedPtsText: displayPtsText, 
                         [`history/round_${quizInfo.currentRound || 1}`]: displayPtsText 
@@ -2349,6 +2362,8 @@ window.onYouTubeIframeAPIReady = () => {
                 updates[`game/users/${child.key}/isPass`] = false;
                 updates[`game/users/${child.key}/hasPointedTitle`] = false; 
                 updates[`game/users/${child.key}/hasCorrectedTitle`] = false;
+                // ★追加：エクストラワード正解フラグもリセット
+                updates[`game/users/${child.key}/hasCorrectedByExtra`] = false;
                 // ★修正：次の曲に行く時にアーティスト正解フラグもリセット
                 updates[`game/users/${child.key}/hasCorrectedArtist`] = false;
                 
@@ -2409,6 +2424,8 @@ window.onYouTubeIframeAPIReady = () => {
                 const u = userListData[uid];
                 // 正解フラグのリセット
                 updates[`game/users/${uid}/hasCorrectedTitle`] = false;
+                // ★追加：エクストラワード正解フラグもリセット
+                updates[`game/users/${uid}/hasCorrectedByExtra`] = false;
                 // ★修正：次の曲に行く時にアーティスト正解フラグもリセット
                 updates[`game/users/${uid}/hasCorrectedArtist`] = false;
                 // 今のスコアを「前回のスコア」として保存（これで参加者画面の0表示を防ぐ）
@@ -2495,6 +2512,8 @@ window.loadRandomFromReserve = loadRandomFromReserve; // 👈 この1行を足�
                             score: 0, 
                             hasCorrectedTitle: false,
                             hasPointedTitle: false, // ここを追加
+                            // ★追加：全リセットした際にもエクストラワード正解フラグをリセット
+                            hasCorrectedByExtra: false,
                             // ★修正：全リセットした際にもアーティスト正解フラグをfalseへリセットする
                             hasCorrectedArtist: false,
                             isPass: false 
@@ -3361,7 +3380,19 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         const MIN_POLL_OPTIONS = 2;
         const pollOptionLetters = ['A', 'B', 'C', 'D', 'E', 'F'];
 
-        document.getElementById('btn-open-poll').onclick = () => {
+        document.getElementById('btn-open-poll').onclick = async () => {
+            const pollPanel = document.getElementById('poll-panel');
+            const isPollActive = pollPanel && pollPanel.style.display !== 'none' && pollPanel.style.display !== '';
+            if (isPollActive) {
+                // ★追加：アンケートが表示中なら、もう一度押すことで消せるようにする
+                try {
+                    await remove(ref(db, 'game/poll'));
+                    await remove(ref(db, 'game/poll_votes'));
+                } catch (e) {
+                    console.error('アンケート終了エラー:', e);
+                }
+                return;
+            }
             if (pollCreateModal) pollCreateModal.style.display = 'flex';
         };
         document.getElementById('btn-poll-cancel').onclick = () => {
