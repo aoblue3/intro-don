@@ -1982,7 +1982,7 @@ window.onYouTubeIframeAPIReady = () => {
                 .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
                 .replace(/[ぁ-ん]/g, (s) => String.fromCharCode(s.charCodeAt(0) + 0x60))
                 .replace(/ヴ/g, 'ブ')
-                .replace(/[\s　・．。、，,.\-]/g, '');
+                .replace(/[\s　・．。、，,.\-！!？?～〜♪★☆「」『』()（）:：;；'’"”\/／&]/g, '');
         };
 
         const normIn = clean(text);
@@ -2034,7 +2034,7 @@ window.onYouTubeIframeAPIReady = () => {
         btns[idx].style.background = "var(--accent-blue, #3498db)";
         btns[idx].style.borderColor = "#fff";
 
-        const clean = (str) => str ? str.toLowerCase().replace(/[\s　]/g, '') : "";
+        const clean = (str) => str ? str.toLowerCase().replace(/[\s　・．。、，,.\-！!？?～〜♪★☆「」『』()（）:：;；'’"”\/／&]/g, '') : "";
         const normIn = clean(selectedText);
         const titleCandidates = quizInfo.title.split('.').map(c => clean(c));
         const isTitle = titleCandidates.some(c => c !== "" && c === normIn);
