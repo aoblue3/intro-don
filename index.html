@@ -653,8 +653,8 @@
                 <option value="quiz">クイズ (URL*!!問題*答え)</option>
                 <option value="mosaic">モザイク (URL*""問題*答え)</option>
                 <!-- ★新モード2つを、指定の記号形式（$! / $"）の注釈付きで追加 -->
-                <option value="choice_quiz">選択肢クイズ (URL*$!問題*正解*誤答1*誤答2*誤答3)</option>
-                <option value="choice_mosaic">選択肢モザイク (URL*$"問題*正解*誤答1*誤答2*誤答3)</option>
+                <option value="choice_quiz">選択肢クイズ (URL*$!問題*正解*誤答1〜5、最大6択)</option>
+                <option value="choice_mosaic">選択肢モザイク (URL*$"問題*正解*誤答1〜5、最大6択)</option>
             </select>
         </div>
         <div class="q-input-group">
@@ -695,6 +695,14 @@
             <div class="q-input-group">
                 <label>選択肢4（誤答）</label>
                 <input type="text" id="mq-choice4" placeholder="間違いの選択肢3">
+            </div>
+            <div class="q-input-group">
+                <label>選択肢5（誤答・任意）</label>
+                <input type="text" id="mq-choice5" placeholder="間違いの選択肢4（空欄でOK）">
+            </div>
+            <div class="q-input-group">
+                <label>選択肢6（誤答・任意）</label>
+                <input type="text" id="mq-choice6" placeholder="間違いの選択肢5（空欄でOK）">
             </div>
         </div>
 
@@ -761,6 +769,8 @@
             <button class="choice-btn" onclick="selectChoice(1)" style="width: calc(50% - 10px); flex: 0 0 auto; box-sizing: border-box;"></button>
             <button class="choice-btn" onclick="selectChoice(2)" style="width: calc(50% - 10px); flex: 0 0 auto; box-sizing: border-box;"></button>
             <button class="choice-btn" onclick="selectChoice(3)" style="width: calc(50% - 10px); flex: 0 0 auto; box-sizing: border-box;"></button>
+            <button class="choice-btn" onclick="selectChoice(4)" style="width: calc(50% - 10px); flex: 0 0 auto; box-sizing: border-box; display:none;"></button>
+            <button class="choice-btn" onclick="selectChoice(5)" style="width: calc(50% - 10px); flex: 0 0 auto; box-sizing: border-box; display:none;"></button>
         </div>
         <!-- ここまで -->
         <div id="quiz-timer-display">15</div>
@@ -1178,8 +1188,13 @@ window.onYouTubeIframeAPIReady = () => {
                             btns[i].disabled = false; // 回答権を復活（新ラウンドのため）
                             btns[i].style.background = "rgba(0, 0, 0, 0.8)"; // 背景を初期化
                             btns[i].style.borderColor = "var(--primary-color)"; // 枠線を初期化
+                            btns[i].style.display = ""; // ★追加：使う選択肢は表示する
                         }
                     });
+                    // ★追加：今回使わない選択肢ボタン（最大6個のうち余った分）は非表示にする
+                    for (let i = quizInfo.choices.length; i < btns.length; i++) {
+                        if (btns[i]) btns[i].style.display = "none";
+                    }
                 }
 
                 // --- ここを追加：カウントダウン終了（READY?が消える）を待って表示 ---
@@ -2411,14 +2426,16 @@ window.onYouTubeIframeAPIReady = () => {
             isChoice = true; isQuiz = true; isMosaic = false;
             qText = p1.substring(2) + "[選択肢から選んでください（変更不可）]";
             aText = parts[2] || ""; 
-            choices = [parts[2], parts[3], parts[4], parts[5]]; 
+            // ★修正：最大6択（正解1＋誤答5）まで対応。未使用の枠は無視する
+            choices = [parts[2], parts[3], parts[4], parts[5], parts[6], parts[7]].filter(c => c !== undefined && c !== "");
         } 
         else if (p1.startsWith('$"')) {
             // 選択肢モザイクモード
             isChoice = true; isQuiz = true; isMosaic = true;
             qText = p1.substring(2) + "[選択肢から選んでください（変更不可）]";
             aText = parts[2] || "";
-            choices = [parts[2], parts[3], parts[4], parts[5]];
+            // ★修正：最大6択（正解1＋誤答5）まで対応。未使用の枠は無視する
+            choices = [parts[2], parts[3], parts[4], parts[5], parts[6], parts[7]].filter(c => c !== undefined && c !== "");
         }
         else if (p1.startsWith("!!")) { 
             // 通常クイズモード
@@ -2811,7 +2828,7 @@ async function renderRanking() {
         try {
             const votesSnap = await get(ref(db, `game/choice_votes/${round}`));
             const votes = votesSnap.exists() ? Object.values(votesSnap.val()) : [];
-            const counts = [0, 0, 0, 0];
+            const counts = [0, 0, 0, 0, 0, 0];
             votes.forEach(v => { if (counts[v] !== undefined) counts[v]++; });
             const total = counts.reduce((a, b) => a + b, 0);
 
@@ -3465,25 +3482,30 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                   question = document.getElementById('mq-question').value.trim(), 
                   vol = document.getElementById('mq-vol').value.trim() || "1.0";
             
-            // ★新設：4つの選択肢の入力値を取得
+            // ★修正：最大6つの選択肢の入力値を取得（5・6番目は任意）
             const c1 = document.getElementById('mq-choice1')?.value.trim() || "",
                   c2 = document.getElementById('mq-choice2')?.value.trim() || "",
                   c3 = document.getElementById('mq-choice3')?.value.trim() || "",
-                  c4 = document.getElementById('mq-choice4')?.value.trim() || "";
+                  c4 = document.getElementById('mq-choice4')?.value.trim() || "",
+                  c5 = document.getElementById('mq-choice5')?.value.trim() || "",
+                  c6 = document.getElementById('mq-choice6')?.value.trim() || "";
 
             if (!url || !title) return alert("URLと答えは必須です");
             
-            // 選択肢モードの時は4つの選択肢が全て埋まっているかチェック
+            // 選択肢モードの時は最低4つ（1〜4）が埋まっているかチェック。5・6は空欄でも可
             if ((type === 'choice_quiz' || type === 'choice_mosaic') && (!c1 || !c2 || !c3 || !c4)) {
-                return alert("選択肢1〜4をすべて入力してください。");
+                return alert("選択肢1〜4をすべて入力してください。（5・6は空欄でも構いません）");
             }
+
+            // ★修正：入力されている選択肢だけをつなげる（空欄の5・6は自動で除外）
+            const choiceParts = [c1, c2, c3, c4, c5, c6].filter(c => c !== "").join('*');
 
             let line = url + "*";
             if (type === 'quiz') line += `!!${question}*${title}`;
             else if (type === 'mosaic') line += `""${question}*${title}`;
-            // ★新設：選択肢クイズなら $!、選択肢モザイクなら $" の形式に組み立てる
-            else if (type === 'choice_quiz') line += `$!${question}*${c1}*${c2}*${c3}*${c4}`;
-            else if (type === 'choice_mosaic') line += `$"${question}*${c1}*${c2}*${c3}*${c4}`;
+            // ★修正：選択肢クイズなら $!、選択肢モザイクなら $" の形式に組み立てる（可変個数対応）
+            else if (type === 'choice_quiz') line += `$!${question}*${choiceParts}`;
+            else if (type === 'choice_mosaic') line += `$"${question}*${choiceParts}`;
             else line += `${title}*${artist}`;
             
             line += `*${vol}`;
@@ -3500,6 +3522,8 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
             if(document.getElementById('mq-choice2')) document.getElementById('mq-choice2').value = "";
             if(document.getElementById('mq-choice3')) document.getElementById('mq-choice3').value = "";
             if(document.getElementById('mq-choice4')) document.getElementById('mq-choice4').value = "";
+            if(document.getElementById('mq-choice5')) document.getElementById('mq-choice5').value = "";
+            if(document.getElementById('mq-choice6')) document.getElementById('mq-choice6').value = "";
             
             qModal.style.display = 'none';
         };
