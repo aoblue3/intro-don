@@ -1446,11 +1446,10 @@ window.onYouTubeIframeAPIReady = () => {
                     });
                 }
                 
-                // --- 選択肢モード時は正解者だけに正解通知を出す ---
+                // --- ★修正：選択肢モードでも、正解した人以外（主催者・不正解者）にも答えを表示する ---
                 if (quizInfo.isChoiceMode) {
-                    if (hasPointedTitle) {
-                        showNoticeColored(`正解！ ${buildColoredAnswerHtml()}`);
-                    }
+                    const prefix = hasPointedTitle ? '正解！ ' : '';
+                    showNoticeColored(`${prefix}${buildColoredAnswerHtml()}`);
                 } else {
                     showNoticeColored(buildColoredAnswerHtml());
                 }
@@ -2152,7 +2151,10 @@ window.onYouTubeIframeAPIReady = () => {
     // ★追加：曲名・アーティスト名・エクストラワードをそれぞれ色分けして表示する（HTML対応版）
     const showNoticeColored = (html) => { const n = document.getElementById('result-notice'); n.innerHTML = html; n.style.color = ""; n.style.display = "block"; };
     const buildColoredAnswerHtml = () => {
-        let html = `<span style="color:var(--success-green)">${quizInfo.title}</span> / <span style="color:#00d4ff">${quizInfo.artist}</span>`;
+        // ★修正：選択肢クイズ／選択肢モザイクにはアーティストの概念が無いので、曲名（正解の選択肢）だけを表示する
+        let html = quizInfo.isChoiceMode
+            ? `<span style="color:var(--success-green)">${quizInfo.title}</span>`
+            : `<span style="color:var(--success-green)">${quizInfo.title}</span> / <span style="color:#00d4ff">${quizInfo.artist}</span>`;
         if (quizInfo.extraWord) {
             const exText = quizInfo.extraWord.split('.').join(' / ');
             html += ` <span style="color:var(--gold); font-weight:bold;">(EX: ${exText})</span>`;
@@ -2175,6 +2177,10 @@ window.onYouTubeIframeAPIReady = () => {
                 const masked = "＊".repeat(m.text.length);
                 displayText = `${masked}（おしい！）`;
             }
+        } else if (quizInfo.isChoiceMode && !isAdmin && m.userId !== myId) {
+            // ★追加：選択肢モードの回答は、本人・主催者以外には何を選んだか分からないよう固定文字数のマスクで表示する
+            // （文字数を実際の回答に合わせると桁数から選択肢が推測できてしまうため、常に固定の記号にする）
+            displayText = "＊＊＊＊＊";
         }
 
         // --- 表示制限（カンニング防止 ＆ 選択肢モード対応） ---
@@ -2426,6 +2432,7 @@ window.onYouTubeIframeAPIReady = () => {
             isChoice = true; isQuiz = true; isMosaic = false;
             qText = p1.substring(2) + "[選択肢から選んでください（変更不可）]";
             aText = parts[2] || ""; 
+            artText = ""; // ★修正：選択肢クイズにアーティスト概念は無いので空にする（表示の重複防止）
             // ★修正：最大6択（正解1＋誤答5）まで対応。未使用の枠は無視する
             choices = [parts[2], parts[3], parts[4], parts[5], parts[6], parts[7]].filter(c => c !== undefined && c !== "");
         } 
@@ -2434,6 +2441,7 @@ window.onYouTubeIframeAPIReady = () => {
             isChoice = true; isQuiz = true; isMosaic = true;
             qText = p1.substring(2) + "[選択肢から選んでください（変更不可）]";
             aText = parts[2] || "";
+            artText = ""; // ★修正：選択肢モザイクにアーティスト概念は無いので空にする（表示の重複防止）
             // ★修正：最大6択（正解1＋誤答5）まで対応。未使用の枠は無視する
             choices = [parts[2], parts[3], parts[4], parts[5], parts[6], parts[7]].filter(c => c !== undefined && c !== "");
         }
