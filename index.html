@@ -553,6 +553,22 @@
             cursor: pointer;
             transition: all 0.2s ease;
             text-shadow: 1px 1px 2px black;
+            position: relative; /* ★追加：投票率バーの重ね合わせ用 */
+            overflow: hidden; /* ★追加：バーが角丸からはみ出さないように */
+        }
+
+        .choice-btn-label { position: relative; z-index: 2; }
+
+        /* ★追加：アンサーチェックで表示する投票率バー・パーセント表示 */
+        .choice-vote-bar {
+            position: absolute; left: 0; top: 0; bottom: 0; width: 0%;
+            background: rgba(111, 66, 193, 0.55); z-index: 1;
+            transition: width 0.8s ease;
+        }
+        .choice-vote-pct {
+            position: absolute; right: 8px; bottom: 6px; z-index: 3;
+            font-size: 0.72rem; background: rgba(0,0,0,0.65);
+            padding: 2px 7px; border-radius: 8px; text-shadow: none;
         }
 
         .choice-btn:hover:not(:disabled) {
@@ -589,6 +605,7 @@
         <button class="admin-btn" id="btn-play-3">3s</button>
         <button class="admin-btn" id="btn-play-5">5s</button>
         <button class="admin-btn" id="btn-play-10">10s</button>
+        ｜ <button class="admin-btn" id="btn-answer-check" style="background:#6f42c1">🔍 アンサーチェック</button>
         ｜ <button class="admin-btn" id="btn-reveal" style="background:#28a745">答え表示</button>
         <button id="btn-pause" class="admin-btn" style="background:#ff9800;">動画を一時停止</button>
         ｜ <button class="admin-btn" id="btn-toggle-rank" style="background:var(--gold); color:#000;">早解き表示</button>
@@ -747,8 +764,14 @@
         </div>        
         <div id="final-results">
             <div style="text-align:center; color:var(--gold); font-weight:bold; font-size:1.6rem; border-bottom:2px solid var(--gold); padding-bottom:10px; margin-bottom:15px; text-shadow:0 0 15px var(--gold);">🏆 FINAL RESULTS 🏆</div>
-            <div id="final-titles-list" style="margin-bottom:10px;"></div>
+            <div id="final-proceed-container" style="display:none; text-align:center; margin-bottom:14px;">
+                <button id="final-proceed-btn" class="admin-btn" style="background:linear-gradient(45deg, var(--gold), #ff9800); color:#000; font-weight:bold; padding:10px 20px;">🏆 結果発表へ進む</button>
+            </div>
+            <div id="final-advance-container" style="display:none; text-align:center; margin-bottom:14px;">
+                <button id="final-advance-btn" class="admin-btn" style="background:linear-gradient(45deg, var(--gold), #ff9800); color:#000; font-weight:bold; padding:10px 20px;">▶ 次の順位へ</button>
+            </div>
             <div id="final-rank-list"></div>
+            <div id="final-titles-list" style="margin-top:14px;"></div>
         </div>
         <!-- ★追加：アンケート表示パネル -->
         <div id="poll-panel">
@@ -1139,7 +1162,12 @@ window.onYouTubeIframeAPIReady = () => {
                 if (quizInfo.choices && quizInfo.choices.length > 0) {
                     quizInfo.choices.forEach((text, i) => {
                         if (btns[i]) {
-                            btns[i].innerText = text;
+                            // ★修正：投票率バーを裏に重ねられるよう、テキストをspanで包んで設定する
+                            btns[i].innerHTML = '';
+                            const labelSpan = document.createElement('span');
+                            labelSpan.className = 'choice-btn-label';
+                            labelSpan.textContent = text;
+                            btns[i].appendChild(labelSpan);
                             btns[i].disabled = false; // 回答権を復活（新ラウンドのため）
                             btns[i].style.background = "rgba(0, 0, 0, 0.8)"; // 背景を初期化
                             btns[i].style.borderColor = "var(--primary-color)"; // 枠線を初期化
@@ -1457,7 +1485,17 @@ window.onYouTubeIframeAPIReady = () => {
                     if (panel) { panel.style.display = "none"; panel.classList.remove('champion-glow-active'); }
                     const titlesList = document.getElementById('final-titles-list');
                     if (titlesList) titlesList.innerHTML = "";
+                    const proceedContainer = document.getElementById('final-proceed-container');
+                    if (proceedContainer) proceedContainer.style.display = "none";
+                    const advanceContainer = document.getElementById('final-advance-container');
+                    if (advanceContainer) advanceContainer.style.display = "none";
                 }
+            } else if(sig.type === 'final_reveal_start_ranking') {
+                if (typeof beginRankingReveal === 'function') beginRankingReveal();
+            } else if(sig.type === 'final_reveal_advance') {
+                if (typeof advanceFinalReveal === 'function') advanceFinalReveal();
+            } else if(sig.type === 'answer_check') {
+                if (typeof showChoiceVoteResults === 'function') showChoiceVoteResults(sig.value);
             } else if(sig.type === 'chance_time_effect') {
                 if (typeof playChanceTimeEffect === 'function') playChanceTimeEffect();
             } else if(sig.type === 'show_video') {
@@ -2041,6 +2079,10 @@ window.onYouTubeIframeAPIReady = () => {
 
         // --- 修正箇所：選択肢モードからの判定であることを一時的なプロパティで付与 ---
         quizInfo.isFromChoiceClick = true;
+
+        // ★追加：後で「何％の人がどの選択肢を選んだか」を集計できるよう、選んだ選択肢のインデックスを記録
+        const voteRound = quizInfo.round || quizInfo.currentRound || 1;
+        set(ref(db, `game/choice_votes/${voteRound}/${myId}`), idx).catch(() => {});
 
         processScore(selectedText, isTitle, false); 
 
@@ -2728,6 +2770,41 @@ async function renderRanking() {
         }
     }
 
+    // ★追加：選択肢クイズのアンサーチェック（正解を明かさず、各選択肢の投票率だけを表示する）
+    async function showChoiceVoteResults(round) {
+        try {
+            const votesSnap = await get(ref(db, `game/choice_votes/${round}`));
+            const votes = votesSnap.exists() ? Object.values(votesSnap.val()) : [];
+            const counts = [0, 0, 0, 0];
+            votes.forEach(v => { if (counts[v] !== undefined) counts[v]++; });
+            const total = counts.reduce((a, b) => a + b, 0);
+
+            const btns = document.querySelectorAll('.choice-btn');
+            btns.forEach((btn, i) => {
+                if (!quizInfo.choices || quizInfo.choices[i] === undefined) return; // 使われていない選択肢は無視
+
+                let bar = btn.querySelector('.choice-vote-bar');
+                if (!bar) {
+                    bar = document.createElement('div');
+                    bar.className = 'choice-vote-bar';
+                    btn.prepend(bar);
+                }
+                let pctEl = btn.querySelector('.choice-vote-pct');
+                if (!pctEl) {
+                    pctEl = document.createElement('span');
+                    pctEl.className = 'choice-vote-pct';
+                    btn.appendChild(pctEl);
+                }
+
+                const pct = total > 0 ? Math.round((counts[i] / total) * 100) : 0;
+                bar.style.width = `${pct}%`;
+                pctEl.innerText = `${pct}%（${counts[i]}票）`;
+            });
+        } catch (e) {
+            console.error('アンサーチェック集計エラー:', e);
+        }
+    }
+
     // ★追加：最終結果発表（全員のスコアを集計し、下位から順にゆっくり発表する）
     // ★追加：チャット・リアクション・履歴データから特別称号を集計する（最終結果発表時に一度だけ実行）
     async function computeTitles(users) {
@@ -2955,15 +3032,26 @@ async function renderRanking() {
         return titles;
     }
 
+    // ★追加：最終結果の参加者リスト・発表要素を各クライアントで共有保持する
+    let finalResultsUsersCache = [];
+    let finalRevealElements = [];
+    let finalRevealNextManualIndex = null; // トップ10発表フェーズで、次にクリックで表示するインデックス
+
     async function renderFinalResults() {
         const usersSnap = await get(ref(db, 'game/users'));
         const panel = document.getElementById('final-results');
         const list = document.getElementById('final-rank-list');
         const titlesList = document.getElementById('final-titles-list');
+        const proceedContainer = document.getElementById('final-proceed-container');
+        const advanceContainer = document.getElementById('final-advance-container');
         list.innerHTML = "";
         titlesList.innerHTML = "";
+        if (proceedContainer) proceedContainer.style.display = "none";
+        if (advanceContainer) advanceContainer.style.display = "none";
         panel.style.display = "block";
         panel.classList.remove('champion-glow-active');
+        finalRevealElements = [];
+        finalRevealNextManualIndex = null;
 
         if (!usersSnap.exists()) { list.innerHTML = "<div>参加者がいません</div>"; return; }
 
@@ -2972,8 +3060,9 @@ async function renderRanking() {
         if (users.length === 0) { list.innerHTML = "<div>参加者がいません</div>"; return; }
 
         users.sort((a, b) => (b.score || 0) - (a.score || 0));
+        finalResultsUsersCache = users; // ★あとでランキング発表フェーズが使う
 
-        // ★修正：先に特別称号を集計して1つずつ表示する
+        // ★称号を先に集計して1つずつ表示する
         try {
             const titles = await computeTitles(users);
             if (titles.length > 0) {
@@ -2995,13 +3084,26 @@ async function renderRanking() {
             console.error("称号集計エラー:", e);
         }
 
-        // ★修正：称号発表が終わったら、続けて順位発表に入る
-        await new Promise(r => setTimeout(r, 800));
+        // ★修正：称号発表が終わったらここでいったん停止し、主催者の「結果発表へ進む」操作を待つ
+        if (isAdmin && proceedContainer) {
+            await new Promise(r => setTimeout(r, 500));
+            proceedContainer.style.display = "block";
+        }
+    }
 
-        const topN = users.slice(0, 5); // 上位5人まで発表
+    // ★追加：主催者が「結果発表へ進む」を押した時に呼ばれる。ランキング発表フェーズを開始する（全クライアント共通）
+    async function beginRankingReveal() {
+        const panel = document.getElementById('final-results');
+        const list = document.getElementById('final-rank-list');
+        const proceedContainer = document.getElementById('final-proceed-container');
+        const advanceContainer = document.getElementById('final-advance-container');
+        if (!panel || !list) return;
+        if (proceedContainer) proceedContainer.style.display = "none";
+        list.innerHTML = "";
 
+        const users = finalResultsUsersCache;
         const elements = [];
-        topN.forEach((u, idx) => {
+        users.forEach((u, idx) => {
             const div = document.createElement('div');
             let rankClass = '';
             let badge = `${idx + 1}位`;
@@ -3013,27 +3115,49 @@ async function renderRanking() {
             list.appendChild(div);
             elements.push({ el: div, rankIndex: idx });
         });
+        finalRevealElements = elements;
 
-        // 下位から1位に向かって逆順に、ゆっくりめに発表していく
-        for (let i = elements.length - 1; i >= 0; i--) {
+        const total = elements.length;
+        const top10Boundary = Math.min(10, total); // インデックス0〜top10Boundary-1が「トップ10」
+
+        // ★下位（11位以下）は、今まで通り自動でゆっくり下から発表していく
+        for (let i = total - 1; i >= top10Boundary; i--) {
             const target = elements[i];
-            let delay = 900;
-            if (target.rankIndex === 0) delay = 3200;
-            else if (target.rankIndex === 1) delay = 2200;
-            else if (target.rankIndex === 2) delay = 1600;
-
-            await new Promise(r => setTimeout(r, delay));
+            await new Promise(r => setTimeout(r, 500));
             target.el.classList.add('show');
+        }
 
-            // ★1位発表の瞬間は、通常より豪華な演出にする
-            if (target.rankIndex === 0) {
-                panel.classList.add('champion-glow-active');
-                if (typeof triggerConfetti === 'function') {
-                    triggerConfetti();
-                    setTimeout(() => triggerConfetti(), 400);
-                    setTimeout(() => triggerConfetti(), 800);
-                }
+        // ★ここから先（トップ10）は、主催者のクリックがあるまで進まない
+        finalRevealNextManualIndex = top10Boundary - 1;
+        if (finalRevealNextManualIndex < 0) return; // 参加者がそもそも10人未満で発表済みの場合
+
+        if (isAdmin && advanceContainer) {
+            advanceContainer.style.display = "block";
+        }
+    }
+
+    // ★追加：トップ10発表フェーズで、次の順位を1つ表示する（全クライアント共通で呼ばれる）
+    function advanceFinalReveal() {
+        if (finalRevealNextManualIndex === null || finalRevealNextManualIndex < 0) return;
+        const target = finalRevealElements[finalRevealNextManualIndex];
+        if (!target) return;
+        target.el.classList.add('show');
+
+        if (target.rankIndex === 0) {
+            const panel = document.getElementById('final-results');
+            if (panel) panel.classList.add('champion-glow-active');
+            if (typeof triggerConfetti === 'function') {
+                triggerConfetti();
+                setTimeout(() => triggerConfetti(), 400);
+                setTimeout(() => triggerConfetti(), 800);
             }
+        }
+
+        finalRevealNextManualIndex--;
+
+        if (finalRevealNextManualIndex < 0 && isAdmin) {
+            const advanceContainer = document.getElementById('final-advance-container');
+            if (advanceContainer) advanceContainer.style.display = "none"; // 優勝まで発表し終わったら隠す
         }
     }
 
@@ -3101,6 +3225,11 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         document.getElementById('btn-play-3').onclick = () => triggerPlayWithCountdown(3);
         document.getElementById('btn-play-5').onclick = () => triggerPlayWithCountdown(5);
         document.getElementById('btn-play-10').onclick = () => triggerPlayWithCountdown(10);
+        // ★追加：アンサーチェック（正解を明かさず、投票率だけを全員に公開する）
+        document.getElementById('btn-answer-check').onclick = () => {
+            const round = quizInfo.round || quizInfo.currentRound || 1;
+            sendSignal('answer_check', round);
+        };
         document.getElementById('btn-reveal').onclick = () => {
             if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
             document.getElementById('quiz-title-mask').style.display = "none";
@@ -3119,6 +3248,16 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
             currentFinalResultsVisible = !currentFinalResultsVisible;
             sendSignal('show_final_results', currentFinalResultsVisible);
         };
+
+        // ★追加：「結果発表へ進む」「次の順位へ」ボタン（主催者のみ操作、全員に同期される）
+        const finalProceedBtn = document.getElementById('final-proceed-btn');
+        if (finalProceedBtn) {
+            finalProceedBtn.onclick = () => sendSignal('final_reveal_start_ranking', Date.now());
+        }
+        const finalAdvanceBtn = document.getElementById('final-advance-btn');
+        if (finalAdvanceBtn) {
+            finalAdvanceBtn.onclick = () => sendSignal('final_reveal_advance', Date.now());
+        }
 
         // ★追加：ブラインドモードのON/OFF切り替え
         document.getElementById('btn-blind-mode').onclick = () => {
