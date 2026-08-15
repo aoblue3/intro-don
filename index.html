@@ -622,6 +622,14 @@
          <button class="admin-btn" id="btn-reset-all" style="background:#444">全リセット</button>
         ｜ <button class="admin-btn" id="btn-voice-toggle" style="background:#9c27b0">🎤 音声配信開始</button>
         <span id="voice-status" style="color:#0f0; font-size:11px; margin-left:5px;"></span>
+        <!-- ★追加：配信は繋げたまま、自分のマイクだけを一時ミュートするボタン -->
+        <button class="admin-btn" id="btn-mic-mute" style="background:#666; display:none;">🎙️ マイクOFF</button>
+        <span style="font-size:11px; color:#aaa; margin-left:5px;">
+            OFF:<span id="mic-off-shortcut-label" style="color:var(--gold);">未設定</span>
+            <button id="btn-set-mic-off-shortcut" style="font-size:10px; padding:2px 6px; margin-left:2px; cursor:pointer;">変更</button>
+            　ON:<span id="mic-on-shortcut-label" style="color:var(--gold);">未設定</span>
+            <button id="btn-set-mic-on-shortcut" style="font-size:10px; padding:2px 6px; margin-left:2px; cursor:pointer;">変更</button>
+        </span>
         ｜ <button class="admin-btn" id="btn-export-log" style="background:#17a2b8">📄 全ログ出力</button>
         ｜ <button class="admin-btn" id="btn-view-chatlog" style="background:#495057">💬 チャットログ</button>
         ｜ <button class="admin-btn" id="btn-final-results" style="background:linear-gradient(45deg, var(--gold), #ff9800); color:#000; font-weight:bold;">🏆 最終結果発表</button>
@@ -3950,6 +3958,9 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         document.getElementById('btn-voice-toggle').innerText = "🎤 音声配信停止";
         document.getElementById('btn-voice-toggle').style.background = "#e91e63";
         document.getElementById('voice-status').innerText = "配信中...";
+        // ★追加：配信が始まったらマイクミュートボタンを表示する
+        const micMuteBtn = document.getElementById('btn-mic-mute');
+        if (micMuteBtn) { micMuteBtn.style.display = 'inline-block'; setMicMuted(false); }
         // ★追加：参加者側に配信中であることを伝えるフラグ
         await set(ref(db, 'game/webrtc/broadcasting'), true);
 
@@ -3978,12 +3989,29 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         document.getElementById('btn-voice-toggle').innerText = "🎤 音声配信開始";
         document.getElementById('btn-voice-toggle').style.background = "#9c27b0";
         document.getElementById('voice-status').innerText = "";
+        // ★追加：配信が止まったらマイクミュートボタンも隠す
+        const micMuteBtn = document.getElementById('btn-mic-mute');
+        if (micMuteBtn) micMuteBtn.style.display = 'none';
         // ★追加：参加者側に配信終了を伝えてから、接続情報を掃除する
         try { await set(ref(db, 'game/webrtc/broadcasting'), false); } catch(e) {}
         try { await remove(ref(db, 'game/webrtc/offers')); } catch(e) {}
         try { await remove(ref(db, 'game/webrtc/answers')); } catch(e) {}
         try { await remove(ref(db, 'game/webrtc/ice')); } catch(e) {}
     }
+
+    // ★追加：配信は繋げたまま、マイクの音声送信だけをON/OFFする（接続の張り直しが不要で一瞬で切り替わる）
+    let isMicMuted = false;
+    function setMicMuted(muted) {
+        if (!hostMicStream) return;
+        isMicMuted = muted;
+        hostMicStream.getAudioTracks().forEach(track => { track.enabled = !muted; });
+        const btn = document.getElementById('btn-mic-mute');
+        if (btn) {
+            btn.innerText = muted ? "🎙️ マイクOFF中" : "🎙️ マイクON中";
+            btn.style.background = muted ? "#dc3545" : "#28a745";
+        }
+    }
+    window.toggleMicMute = () => setMicMuted(!isMicMuted);
 
     // --- 主催者側：配信中に新しく参加者がオンラインになったら自動接続 ---
     onValue(ref(db, 'game/users'), (snap) => {
@@ -4133,6 +4161,88 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                 else startVoiceBroadcast();
             };
         }
+        // ★追加：マイクミュートボタン（配信は繋げたまま、送る音声だけON/OFFする）
+        const micMuteBtn = document.getElementById('btn-mic-mute');
+        if (micMuteBtn) {
+            micMuteBtn.onclick = () => { if (typeof toggleMicMute === 'function') toggleMicMute(); };
+        }
+
+        // ★追加：マイクOFF/ONのショートカットキー登録機能
+        const shortcutKeyToLabel = (e) => {
+            const parts = [];
+            if (e.ctrlKey) parts.push('Ctrl');
+            if (e.altKey) parts.push('Alt');
+            if (e.shiftKey) parts.push('Shift');
+            let keyName = e.key;
+            if (keyName === ' ') keyName = 'Space';
+            else if (keyName.length === 1) keyName = keyName.toUpperCase();
+            parts.push(keyName);
+            return parts.join('+');
+        };
+        const shortcutKeyToId = (e) => {
+            return [e.ctrlKey ? 'ctrl' : '', e.altKey ? 'alt' : '', e.shiftKey ? 'shift' : '', e.code].filter(Boolean).join('+');
+        };
+
+        const loadShortcut = (storageKey) => localStorage.getItem(storageKey) || null;
+        const loadShortcutLabel = (storageKey) => localStorage.getItem(storageKey + '_label') || null;
+
+        const refreshShortcutLabels = () => {
+            const offLabel = loadShortcutLabel('mic_off_shortcut');
+            const onLabel = loadShortcutLabel('mic_on_shortcut');
+            const offEl = document.getElementById('mic-off-shortcut-label');
+            const onEl = document.getElementById('mic-on-shortcut-label');
+            if (offEl) offEl.innerText = offLabel || '未設定';
+            if (onEl) onEl.innerText = onLabel || '未設定';
+        };
+        refreshShortcutLabels();
+
+        const startShortcutRecording = (storageKey, buttonEl) => {
+            const originalText = buttonEl.innerText;
+            buttonEl.innerText = 'キー入力待ち...';
+            buttonEl.disabled = true;
+            const handler = (e) => {
+                e.preventDefault();
+                // Escで登録キャンセル
+                if (e.key !== 'Escape') {
+                    localStorage.setItem(storageKey, shortcutKeyToId(e));
+                    localStorage.setItem(storageKey + '_label', shortcutKeyToLabel(e));
+                }
+                document.removeEventListener('keydown', handler, true);
+                buttonEl.innerText = originalText;
+                buttonEl.disabled = false;
+                refreshShortcutLabels();
+            };
+            document.addEventListener('keydown', handler, true);
+        };
+
+        const btnSetMicOffShortcut = document.getElementById('btn-set-mic-off-shortcut');
+        if (btnSetMicOffShortcut) {
+            btnSetMicOffShortcut.onclick = () => startShortcutRecording('mic_off_shortcut', btnSetMicOffShortcut);
+        }
+        const btnSetMicOnShortcut = document.getElementById('btn-set-mic-on-shortcut');
+        if (btnSetMicOnShortcut) {
+            btnSetMicOnShortcut.onclick = () => startShortcutRecording('mic_on_shortcut', btnSetMicOnShortcut);
+        }
+
+        // ★追加：登録されたショートカットキーの実行監視（主催者のみ、入力欄にフォーカス中は無視する）
+        document.addEventListener('keydown', (e) => {
+            if (!isAdmin || !hostMicStream) return;
+            const tag = (e.target && e.target.tagName) || '';
+            if (tag === 'INPUT' || tag === 'TEXTAREA') return; // 入力中は誤爆させない
+
+            const pressedId = shortcutKeyToId(e);
+            const offId = loadShortcut('mic_off_shortcut');
+            const onId = loadShortcut('mic_on_shortcut');
+
+            if (offId && pressedId === offId) {
+                e.preventDefault();
+                setMicMuted(true);
+            } else if (onId && pressedId === onId) {
+                e.preventDefault();
+                setMicMuted(false);
+            }
+        });
+
         // ★追加：自動再生がブロックされた時の「有効にする」ボタン
         const voiceEnableBtn = document.getElementById('voice-enable-btn');
         if (voiceEnableBtn) {
