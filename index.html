@@ -2264,7 +2264,8 @@ window.onYouTubeIframeAPIReady = () => {
     }
 
     // ★追加：チャンスタイム（次のラウンド2倍ポイント）の演出本体。シグナル経由で全クライアントが同時再生する
-    // ★追加：「ピチュン」効果音を合成して鳴らす（外部音声ファイル不要）
+    // ★修正：頂いた参考音源を解析し（①冒頭のノイズ→②高音から低音へ下降する音→③終わりのノイズ）、
+    // 通信量を増やさないよう外部音声ファイルは使わず、Web Audio APIの合成だけで再現する
     let sfxAudioContext = null;
     function playPichunSound() {
         try {
@@ -2273,18 +2274,54 @@ window.onYouTubeIframeAPIReady = () => {
             if (ctx.state === 'suspended') ctx.resume();
             const now = ctx.currentTime;
 
+            // 短いノイズの「チッ」を作る共通関数（ホワイトノイズ＋ハイパスフィルター）
+            const makeNoiseBurst = (startTime, duration, peakGain) => {
+                const bufferSize = Math.max(1, Math.floor(ctx.sampleRate * duration));
+                const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+
+                const noiseSource = ctx.createBufferSource();
+                noiseSource.buffer = buffer;
+
+                const hp = ctx.createBiquadFilter();
+                hp.type = 'highpass';
+                hp.frequency.value = 4000;
+
+                const noiseGain = ctx.createGain();
+                noiseGain.gain.setValueAtTime(0.0001, startTime);
+                noiseGain.gain.exponentialRampToValueAtTime(peakGain, startTime + duration * 0.2);
+                noiseGain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+
+                noiseSource.connect(hp).connect(noiseGain).connect(ctx.destination);
+                noiseSource.start(startTime);
+                noiseSource.stop(startTime + duration);
+            };
+
+            // ①冒頭の「チッ」というノイズ
+            makeNoiseBurst(now, 0.09, 0.35);
+
+            // ②高音から低音へゆっくり下降するメインの「プチュン」音
+            const toneStart = now + 0.08;
             const osc = ctx.createOscillator();
             const gain = ctx.createGain();
             osc.type = 'sine';
-            osc.frequency.setValueAtTime(280, now);
-            osc.frequency.exponentialRampToValueAtTime(1900, now + 0.07);
-            osc.frequency.exponentialRampToValueAtTime(950, now + 0.2);
-            gain.gain.setValueAtTime(0.0001, now);
-            gain.gain.exponentialRampToValueAtTime(0.55, now + 0.02);
-            gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
+            osc.frequency.setValueAtTime(1400, toneStart);
+            osc.frequency.exponentialRampToValueAtTime(300, toneStart + 0.27);
+            osc.frequency.exponentialRampToValueAtTime(90, toneStart + 0.55);
+            osc.frequency.linearRampToValueAtTime(75, toneStart + 0.85);
+
+            gain.gain.setValueAtTime(0.0001, toneStart);
+            gain.gain.exponentialRampToValueAtTime(0.5, toneStart + 0.08);
+            gain.gain.exponentialRampToValueAtTime(0.28, toneStart + 0.3);
+            gain.gain.exponentialRampToValueAtTime(0.0001, toneStart + 0.88);
+
             osc.connect(gain).connect(ctx.destination);
-            osc.start(now);
-            osc.stop(now + 0.45);
+            osc.start(toneStart);
+            osc.stop(toneStart + 0.9);
+
+            // ③終わり際の「チッ」というノイズ
+            makeNoiseBurst(toneStart + 0.85, 0.08, 0.3);
         } catch (e) {
             console.error('効果音再生エラー:', e);
         }
@@ -2916,14 +2953,17 @@ async function renderRanking() {
         const titles = [];
         const nameOf = (id) => { const u = users.find(x => x.id === id); return u ? u.name : null; };
 
-        const [chatSnap, reactionSnap, historySnap] = await Promise.all([
+        const [chatSnap, reactionSnap, historySnap, choiceVotesSnap] = await Promise.all([
             get(ref(db, 'game/chats')),
             get(ref(db, 'game/reactions')),
-            get(ref(db, 'game/history'))
+            get(ref(db, 'game/history')),
+            get(ref(db, 'game/choice_votes'))
         ]);
 
         // --- 発言王・おしい賞・パス回数・寡黙賞：チャット全体を集計 ---
         const chatCounts = {}, nearCounts = {}, passCounts = {};
+        // ★追加：不屈の挑戦者・コメント職人賞・一言居士賞用のデータ
+        const wrongCounts = {}, msgLengthSum = {}, msgLengthCount = {};
         if (chatSnap.exists()) {
             chatSnap.forEach(c => {
                 const d = c.val();
@@ -2931,6 +2971,14 @@ async function renderRanking() {
                 chatCounts[d.userId] = (chatCounts[d.userId] || 0) + 1;
                 if (d.isNear) nearCounts[d.userId] = (nearCounts[d.userId] || 0) + 1;
                 if (d.isPass) passCounts[d.userId] = (passCounts[d.userId] || 0) + 1;
+                // ★追加：正解・おしい・パスのいずれでもない = 純粋な不正解
+                if (!d.isTitle && !d.isArtist && !d.isNear && !d.isPass) {
+                    wrongCounts[d.userId] = (wrongCounts[d.userId] || 0) + 1;
+                }
+                if (d.text) {
+                    msgLengthSum[d.userId] = (msgLengthSum[d.userId] || 0) + d.text.length;
+                    msgLengthCount[d.userId] = (msgLengthCount[d.userId] || 0) + 1;
+                }
             });
         }
         const topChat = Object.entries(chatCounts).sort((a, b) => b[1] - a[1])[0];
@@ -2973,7 +3021,9 @@ async function renderRanking() {
             '💩': { label: '悪戯っ子賞', unit: '回💩' },
             '🥺': { label: '甘えん坊賞', unit: '回🥺' },
             '😡': { label: '激おこ賞', unit: '回😡' },
-            '🤪': { label: 'お祭り騒ぎ賞', unit: '回🤪' }
+            '🤪': { label: 'お祭り騒ぎ賞', unit: '回🤪' },
+            '😭': { label: '涙腺崩壊賞', unit: '回😭' },
+            '👍': { label: 'グッジョブ王', unit: '回👍' }
         };
         Object.entries(emojiTitleMap).forEach(([emoji, info]) => {
             const counts = reactionByEmoji[emoji];
@@ -2985,6 +3035,66 @@ async function renderRanking() {
             }
         });
 
+        // ★追加：一途な人賞：リアクションを送っているが、常に同じ1種類の絵文字しか使わない人（3回以上が条件）
+        const perUserEmojiTypes = {}; // uid -> Set(emoji)
+        Object.entries(reactionByEmoji).forEach(([emoji, counts]) => {
+            Object.keys(counts).forEach(uid => {
+                if (!perUserEmojiTypes[uid]) perUserEmojiTypes[uid] = new Set();
+                perUserEmojiTypes[uid].add(emoji);
+            });
+        });
+        const loyalCandidates = Object.entries(perUserEmojiTypes)
+            .filter(([uid, set]) => set.size === 1 && (reactionCounts[uid] || 0) >= 3)
+            .map(([uid]) => [uid, reactionCounts[uid]])
+            .sort((a, b) => b[1] - a[1]);
+        if (loyalCandidates.length > 0) {
+            const [uid, cnt] = loyalCandidates[0];
+            const onlyEmoji = [...perUserEmojiTypes[uid]][0];
+            const name = nameOf(uid);
+            if (name) titles.push({ emoji: '🎨', label: '一途な人賞', name, detail: `${onlyEmoji}だけを${cnt}回` });
+        }
+
+        // ★追加：クールヘッド賞：たくさん参加したのに、リアクションはほとんど送らない冷静な人
+        const coolHeadCandidates = Object.entries(perUser)
+            .filter(([, d]) => d.rounds && d.rounds.length >= 3)
+            .map(([uid]) => [uid, reactionCounts[uid] || 0])
+            .sort((a, b) => a[1] - b[1]);
+        if (coolHeadCandidates.length > 0) {
+            const name = nameOf(coolHeadCandidates[0][0]);
+            if (name) titles.push({ emoji: '🧊', label: 'クールヘッド賞', name, detail: `冷静に参加` });
+        }
+
+        // ★追加：賑やかし隊長：チャット＋リアクションの合計アクティビティが一番多い人
+        const activityCandidates = Object.keys({ ...chatCounts, ...reactionCounts })
+            .map(uid => [uid, (chatCounts[uid] || 0) + (reactionCounts[uid] || 0)])
+            .sort((a, b) => b[1] - a[1]);
+        if (activityCandidates.length > 0 && activityCandidates[0][1] > 0) {
+            const name = nameOf(activityCandidates[0][0]);
+            if (name) titles.push({ emoji: '🎪', label: '賑やかし隊長', name, detail: `活動量No.1` });
+        }
+
+        // ★追加：コメント職人賞・一言居士賞：平均メッセージ文字数の長い人／短い人
+        const avgLenCandidates = Object.entries(msgLengthCount)
+            .filter(([, cnt]) => cnt >= 3)
+            .map(([uid, cnt]) => [uid, msgLengthSum[uid] / cnt])
+            .sort((a, b) => b[1] - a[1]);
+        if (avgLenCandidates.length > 0) {
+            const name = nameOf(avgLenCandidates[0][0]);
+            if (name) titles.push({ emoji: '✍️', label: 'コメント職人賞', name, detail: `平均${avgLenCandidates[0][1].toFixed(1)}文字` });
+        }
+        if (avgLenCandidates.length > 0) {
+            const shortest = [...avgLenCandidates].sort((a, b) => a[1] - b[1])[0];
+            const name = nameOf(shortest[0]);
+            if (name) titles.push({ emoji: '💬', label: '一言居士賞', name, detail: `平均${shortest[1].toFixed(1)}文字` });
+        }
+
+        // ★追加：不屈の挑戦者：一番たくさん間違えても諦めなかった人
+        const topWrong = Object.entries(wrongCounts).sort((a, b) => b[1] - a[1])[0];
+        if (topWrong && topWrong[1] > 0) {
+            const name = nameOf(topWrong[0]);
+            if (name) titles.push({ emoji: '🔁', label: '不屈の挑戦者', name, detail: `${topWrong[1]}回挑戦` });
+        }
+
         // --- 履歴データから各種称号を集計 ---
         const historyByRound = {};
         if (historySnap.exists()) {
@@ -2992,17 +3102,19 @@ async function renderRanking() {
         }
         const roundNums = Object.keys(historyByRound).map(Number).sort((a, b) => a - b);
 
-        const perUser = {}; // uid -> { rounds:[], firstCount, extraCount, allHit, totalPts, maxSingle, modePts:{} }
+        const perUser = {}; // uid -> { rounds:[], firstCount, extraCount, allHit, totalPts, maxSingle, modePts:{}, roundPtsList:[], top3Count }
         roundNums.forEach(rNum => {
             const roundData = historyByRound[rNum];
             Object.keys(roundData).forEach(uid => {
                 const entry = roundData[uid];
-                if (!perUser[uid]) perUser[uid] = { rounds: [], firstCount: 0, extraCount: 0, allHit: true, totalPts: 0, maxSingle: 0, modePts: {} };
+                if (!perUser[uid]) perUser[uid] = { rounds: [], firstCount: 0, extraCount: 0, allHit: true, totalPts: 0, maxSingle: 0, modePts: {}, roundPtsList: [], top3Count: 0 };
                 const pts = entry.ptsRaw || 0;
                 perUser[uid].rounds.push(rNum);
                 perUser[uid].totalPts += pts;
+                perUser[uid].roundPtsList.push(pts);
                 if (pts > perUser[uid].maxSingle) perUser[uid].maxSingle = pts;
                 if (entry.rank === 1) perUser[uid].firstCount++;
+                if (entry.rank === 1 || entry.rank === 2 || entry.rank === 3) perUser[uid].top3Count++;
                 if (entry.ptsDisplay && entry.ptsDisplay.includes('(ワード正解)')) perUser[uid].extraCount++;
                 if (!pts || pts <= 0) perUser[uid].allHit = false;
                 const mode = entry.mode || 'unknown';
@@ -3016,6 +3128,14 @@ async function renderRanking() {
         if (best1st && best1st[1] > 0) {
             const name = nameOf(best1st[0]);
             if (name) titles.push({ emoji: '👑', label: '早押し王', name, detail: `早解き1位 ${best1st[1]}回` });
+        }
+
+        // ★追加：表彰台常連賞：早解きトップ3（1〜3位）に入った回数が一番多い人
+        let bestTop3 = null;
+        Object.entries(perUser).forEach(([uid, d]) => { if (!bestTop3 || d.top3Count > bestTop3[1]) bestTop3 = [uid, d.top3Count]; });
+        if (bestTop3 && bestTop3[1] > 0) {
+            const name = nameOf(bestTop3[0]);
+            if (name) titles.push({ emoji: '🥇', label: '表彰台常連賞', name, detail: `トップ3入り ${bestTop3[1]}回` });
         }
 
         // エクストラハンター：エクストラワード正解数が一番多い人
@@ -3113,6 +3233,136 @@ async function renderRanking() {
         if (mutedCandidates.length > 0) {
             const name = nameOf(mutedCandidates[0][0]);
             if (name) titles.push({ emoji: '🤐', label: '寡黙な実力者賞', name, detail: `静かに好成績` });
+        }
+
+        // ★追加：オールラウンダー賞：一番多くの種類のモードで得点した人
+        const allroundCandidates = Object.entries(perUser)
+            .map(([uid, d]) => [uid, Object.values(d.modePts).filter(p => p > 0).length])
+            .filter(([, cnt]) => cnt >= 2)
+            .sort((a, b) => b[1] - a[1]);
+        if (allroundCandidates.length > 0) {
+            const name = nameOf(allroundCandidates[0][0]);
+            if (name) titles.push({ emoji: '🌈', label: 'オールラウンダー賞', name, detail: `${allroundCandidates[0][1]}種類のモードで得点` });
+        }
+
+        // ★追加：一点集中賞：得点のほとんどが1つのモードに集中している専門家（3問以上参加が条件）
+        const focusCandidates = Object.entries(perUser)
+            .filter(([, d]) => d.rounds.length >= 3 && d.totalPts > 0)
+            .map(([uid, d]) => {
+                const maxModePts = Math.max(...Object.values(d.modePts));
+                return [uid, maxModePts / d.totalPts];
+            })
+            .sort((a, b) => b[1] - a[1]);
+        if (focusCandidates.length > 0) {
+            const name = nameOf(focusCandidates[0][0]);
+            if (name) titles.push({ emoji: '🔬', label: '一点集中賞', name, detail: `${Math.round(focusCandidates[0][1] * 100)}%が同じモード` });
+        }
+
+        // ★追加：安定感賞・波乱万丈賞：1問ごとの得点のブレが小さい人／大きい人（4問以上参加が条件）
+        const varianceCandidates = Object.entries(perUser)
+            .filter(([, d]) => d.rounds.length >= 4)
+            .map(([uid, d]) => {
+                const avg = d.totalPts / d.roundPtsList.length;
+                const variance = d.roundPtsList.reduce((sum, p) => sum + Math.pow(p - avg, 2), 0) / d.roundPtsList.length;
+                return [uid, variance];
+            });
+        if (varianceCandidates.length > 0) {
+            const stable = [...varianceCandidates].sort((a, b) => a[1] - b[1])[0];
+            const wild = [...varianceCandidates].sort((a, b) => b[1] - a[1])[0];
+            const stableName = nameOf(stable[0]);
+            if (stableName) titles.push({ emoji: '⚖️', label: '安定感賞', name: stableName, detail: `毎問安定した得点` });
+            const wildName = nameOf(wild[0]);
+            if (wildName && wild[0] !== stable[0]) titles.push({ emoji: '🌊', label: '波乱万丈賞', name: wildName, detail: `得点の浮き沈みが激しい` });
+        }
+
+        // ★追加：ラストスパート賞：最後のラウンドで一番得点した人
+        if (roundNums.length > 0) {
+            const lastRound = roundNums[roundNums.length - 1];
+            const lastRoundData = historyByRound[lastRound] || {};
+            const lastSpurtCandidates = Object.entries(lastRoundData)
+                .map(([uid, entry]) => [uid, entry.ptsRaw || 0])
+                .sort((a, b) => b[1] - a[1]);
+            if (lastSpurtCandidates.length > 0 && lastSpurtCandidates[0][1] > 0) {
+                const name = nameOf(lastSpurtCandidates[0][0]);
+                if (name) titles.push({ emoji: '🏁', label: 'ラストスパート賞', name, detail: `最終問題で${lastSpurtCandidates[0][1]}pt` });
+            }
+        }
+
+        // ★追加：多数派賞・天邪鬼賞：選択肢クイズで、みんなと同じ／みんなと違う選択肢を選びがちな人
+        if (choiceVotesSnap.exists()) {
+            const majorityCounts = {}, minorityCounts = {};
+            choiceVotesSnap.forEach(roundSnap => {
+                const roundVotes = roundSnap.val() || {};
+                const tally = {};
+                Object.values(roundVotes).forEach(idx => { tally[idx] = (tally[idx] || 0) + 1; });
+                const entries = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+                if (entries.length === 0) return;
+                const majorityIdx = entries[0][0];
+                const minorityIdx = entries[entries.length - 1][0];
+                Object.entries(roundVotes).forEach(([uid, idx]) => {
+                    if (String(idx) === String(majorityIdx)) majorityCounts[uid] = (majorityCounts[uid] || 0) + 1;
+                    if (entries.length > 1 && String(idx) === String(minorityIdx)) minorityCounts[uid] = (minorityCounts[uid] || 0) + 1;
+                });
+            });
+            const topMajority = Object.entries(majorityCounts).sort((a, b) => b[1] - a[1])[0];
+            if (topMajority && topMajority[1] > 0) {
+                const name = nameOf(topMajority[0]);
+                if (name) titles.push({ emoji: '👥', label: '多数派賞', name, detail: `${topMajority[1]}回みんなと同じ選択` });
+            }
+            const topMinority = Object.entries(minorityCounts).sort((a, b) => b[1] - a[1])[0];
+            if (topMinority && topMinority[1] > 0) {
+                const name = nameOf(topMinority[0]);
+                if (name) titles.push({ emoji: '🦄', label: '天邪鬼賞', name, detail: `${topMinority[1]}回少数派を選択` });
+            }
+        }
+
+        // ★追加：最古参賞：一番早くルームに参加した人
+        const earliestJoin = [...users].filter(u => u.joinedAt).sort((a, b) => a.joinedAt - b.joinedAt)[0];
+        if (earliestJoin) {
+            titles.push({ emoji: '🕰️', label: '最古参賞', name: earliestJoin.name, detail: `一番早く参加` });
+        }
+
+        // ★追加：縁の下の力持ち賞：早解き1位を1回も取っていないのに、しっかり得点を積み上げた人
+        const supportCandidates = Object.entries(perUser)
+            .filter(([, d]) => d.firstCount === 0 && d.rounds.length >= 3)
+            .sort((a, b) => b[1].totalPts - a[1].totalPts);
+        if (supportCandidates.length > 0 && supportCandidates[0][1].totalPts > 0) {
+            const name = nameOf(supportCandidates[0][0]);
+            if (name) titles.push({ emoji: '🤝', label: '縁の下の力持ち賞', name, detail: `派手さ無しで${supportCandidates[0][1].totalPts}pt` });
+        }
+
+        // ★追加：一撃離脱賞：ほとんど発言していないのに、しっかり得点した人
+        const hitAndAwayCandidates = Object.entries(perUser)
+            .filter(([uid, d]) => d.totalPts > 0 && (chatCounts[uid] || 0) <= 2)
+            .sort((a, b) => b[1].totalPts - a[1].totalPts);
+        if (hitAndAwayCandidates.length > 0) {
+            const name = nameOf(hitAndAwayCandidates[0][0]);
+            if (name) titles.push({ emoji: '🎯', label: '一撃離脱賞', name, detail: `最小限の発言で${hitAndAwayCandidates[0][1].totalPts}pt` });
+        }
+
+        // ★追加：二冠王：総合優勝者が、早押し王も兼ねていた場合の特別称号
+        if (users.length > 0 && best1st) {
+            const champion = users[0]; // usersは既にスコア順にソート済み
+            if (champion && champion.id === best1st[0] && best1st[1] > 0) {
+                titles.push({ emoji: '👑', label: '二冠王', name: champion.name, detail: `総合優勝＋早押し王` });
+            }
+        }
+
+        // ★追加：成長賞：前半より後半の方が調子が上がった人（4問以上参加が条件）
+        const growthCandidates = Object.entries(perUser)
+            .filter(([, d]) => d.roundPtsList.length >= 4)
+            .map(([uid, d]) => {
+                const half = Math.floor(d.roundPtsList.length / 2);
+                const firstHalf = d.roundPtsList.slice(0, half);
+                const secondHalf = d.roundPtsList.slice(half);
+                const firstAvg = firstHalf.reduce((a, b) => a + b, 0) / firstHalf.length;
+                const secondAvg = secondHalf.reduce((a, b) => a + b, 0) / secondHalf.length;
+                return [uid, secondAvg - firstAvg];
+            })
+            .sort((a, b) => b[1] - a[1]);
+        if (growthCandidates.length > 0 && growthCandidates[0][1] > 0) {
+            const name = nameOf(growthCandidates[0][0]);
+            if (name) titles.push({ emoji: '📈', label: '成長賞', name, detail: `後半にかけて絶好調` });
         }
 
         // ★追加：モード別称号（そのモードで一番得点した人。該当データがある場合のみ）
