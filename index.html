@@ -457,8 +457,8 @@
             #main-game { flex-direction: column; }
             #video-section { flex: 1; height: auto; min-height: 0; }
 
-            /* ★追加：狭い画面（スマホ縦向き等）では選択肢を横3列だと窮屈なので2列に減らす */
-            #choice-container { grid-template-columns: repeat(2, 1fr); }
+            /* ★修正：狭い画面（スマホ縦向き等）では選択肢を横3列だと窮屈なので2列に減らす（詳細度をクラス指定に合わせる） */
+            #choice-container.choice-cols-2, #choice-container.choice-cols-3 { grid-template-columns: repeat(2, 1fr); }
 
             /* サイドバー（ランキング）は普段は右から隠れており、ボタンでスライド表示 */
             #sidebar {
@@ -526,9 +526,9 @@
             }
         }
 
-        /* ★追加：さらに極端に幅が狭い端末は選択肢を1列にする */
+        /* ★追加：さらに極端に幅が狭い端末は選択肢を1列にする（詳細度をクラス指定に合わせる） */
         @media (max-width: 380px) {
-            #choice-container { grid-template-columns: 1fr; }
+            #choice-container.choice-cols-2, #choice-container.choice-cols-3 { grid-template-columns: 1fr; }
         }
 
         /* ★追加：スマホ横向き（landscape）専用の調整。縦の高さが少ないので、リアクションは右端に縦の帯として戻す */
@@ -565,11 +565,13 @@
             margin: 15px auto;    /* 中央寄せ */
         }
 
-        /* ★修正：横3列×縦2列になるようグリッドレイアウトに変更 */
+        /* ★修正：選択肢数に応じて列数を切り替えられるグリッドレイアウトに変更 */
         #choice-container {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(3, 1fr); /* デフォルト（クラス未指定時）は3列 */
         }
+        #choice-container.choice-cols-2 { grid-template-columns: repeat(2, 1fr); }
+        #choice-container.choice-cols-3 { grid-template-columns: repeat(3, 1fr); }
 
         /* 2. 選択肢ボタン本体 */
         .choice-btn {
@@ -1261,6 +1263,13 @@ window.onYouTubeIframeAPIReady = () => {
                     // ★追加：今回使わない選択肢ボタン（最大6個のうち余った分）は非表示にする
                     for (let i = quizInfo.choices.length; i < btns.length; i++) {
                         if (btns[i]) btns[i].style.display = "none";
+                    }
+                    // ★修正：選択肢の数に応じて列数を調整する（4択の時だけ2×2にする）。
+                    // インラインstyleだとスマホ用メディアクエリを上書きしてしまうため、クラス切り替えにする
+                    if (choiceArea) {
+                        const count = quizInfo.choices.length;
+                        choiceArea.classList.remove('choice-cols-2', 'choice-cols-3');
+                        choiceArea.classList.add(count === 4 ? 'choice-cols-2' : 'choice-cols-3');
                     }
                 }
 
@@ -2332,7 +2341,7 @@ window.onYouTubeIframeAPIReady = () => {
             source.buffer = pichunAudioBuffer;
             // ★修正：音量を0.8倍に下げる
             const gainNode = ctx.createGain();
-            gainNode.gain.value = 0.8;
+            gainNode.gain.value = 0.6;
             source.connect(gainNode).connect(ctx.destination);
             source.start(0);
         } catch (e) {
@@ -3420,7 +3429,7 @@ async function renderRanking() {
             player.loadVideoById({ videoId: FINAL_RESULTS_BGM_VIDEO_ID, startSeconds: 0 });
             if (!isMuted && player.unMute) player.unMute();
             // ★修正：音量を0.8倍（80%）に下げる
-            if (player.setVolume) player.setVolume(80);
+            if (player.setVolume) player.setVolume(50);
         } catch (e) {
             console.error('最終結果BGM再生エラー:', e);
         }
