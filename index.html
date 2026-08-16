@@ -57,6 +57,21 @@
             max-width: 70%; text-align: center;
         }
 
+        /* ★追加：選択肢クイズで動画再生が始まったら、問題文を左端に縦書きで表示する（選択肢と重ならないように） */
+        #quiz-question-display.vertical-left {
+            left: 16px; bottom: auto; top: 50%; right: auto;
+            transform: translateY(-50%);
+            writing-mode: vertical-rl;
+            text-orientation: upright;
+            max-width: none; max-height: 75%;
+            padding: 20px 10px;
+            font-size: 1.3rem;
+            text-align: left;
+            overflow-y: auto;
+            border-left: none;
+            border-right: 5px solid var(--primary-color);
+        }
+
         /* クイズ専用15秒カウントダウン */
         #quiz-timer-display {
             position: absolute; bottom: 80px; right: 20px;
@@ -442,6 +457,9 @@
             #main-game { flex-direction: column; }
             #video-section { flex: 1; height: auto; min-height: 0; }
 
+            /* ★追加：狭い画面（スマホ縦向き等）では選択肢を横3列だと窮屈なので2列に減らす */
+            #choice-container { grid-template-columns: repeat(2, 1fr); }
+
             /* サイドバー（ランキング）は普段は右から隠れており、ボタンでスライド表示 */
             #sidebar {
                 position: fixed; top: 0; right: 0; height: 100%; width: 78vw; max-width: 320px;
@@ -508,6 +526,11 @@
             }
         }
 
+        /* ★追加：さらに極端に幅が狭い端末は選択肢を1列にする */
+        @media (max-width: 380px) {
+            #choice-container { grid-template-columns: 1fr; }
+        }
+
         /* ★追加：スマホ横向き（landscape）専用の調整。縦の高さが少ないので、リアクションは右端に縦の帯として戻す */
         @media (max-width: 820px) and (orientation: landscape) {
             #reaction-bar {
@@ -542,12 +565,14 @@
             margin: 15px auto;    /* 中央寄せ */
         }
 
+        /* ★修正：横3列×縦2列になるようグリッドレイアウトに変更 */
+        #choice-container {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+        }
+
         /* 2. 選択肢ボタン本体 */
         .choice-btn {
-            /* --- 横並びの設定 --- */
-            flex: 1 1 calc(50% - 10px); /* 幅を半分（50%）に設定。隙間分を引く */
-            box-sizing: border-box;
-    
             /* --- 見た目の設定（あなたのコードをベースにしています） --- */
             padding: 15px 10px; /* 上下15px, 左右10px */
             font-size: 18px;
@@ -804,12 +829,12 @@
         <div id="mosaic-overlay"></div>
         <div id="quiz-question-display"></div>
         <!-- 選択肢クイズ用エリア：下方向にスライドさせて問題文に接近 -->
-        <div id="choice-container" style="display: none; flex-wrap: wrap; gap: 10px; width: 100%; max-width: 500px; position: absolute; top: 60%; left: 50%; transform: translate(-50%, 40px); z-index: 100; justify-content: center;">            <button class="choice-btn" onclick="selectChoice(0)" style="width: calc(50% - 10px); flex: 0 0 auto; box-sizing: border-box;"></button>
-            <button class="choice-btn" onclick="selectChoice(1)" style="width: calc(50% - 10px); flex: 0 0 auto; box-sizing: border-box;"></button>
-            <button class="choice-btn" onclick="selectChoice(2)" style="width: calc(50% - 10px); flex: 0 0 auto; box-sizing: border-box;"></button>
-            <button class="choice-btn" onclick="selectChoice(3)" style="width: calc(50% - 10px); flex: 0 0 auto; box-sizing: border-box;"></button>
-            <button class="choice-btn" onclick="selectChoice(4)" style="width: calc(50% - 10px); flex: 0 0 auto; box-sizing: border-box; display:none;"></button>
-            <button class="choice-btn" onclick="selectChoice(5)" style="width: calc(50% - 10px); flex: 0 0 auto; box-sizing: border-box; display:none;"></button>
+        <div id="choice-container" style="display: none; gap: 10px; width: 100%; max-width: 700px; position: absolute; top: 60%; left: 50%; transform: translate(-50%, 40px); z-index: 100;">            <button class="choice-btn" onclick="selectChoice(0)" style="box-sizing: border-box;"></button>
+            <button class="choice-btn" onclick="selectChoice(1)" style="box-sizing: border-box;"></button>
+            <button class="choice-btn" onclick="selectChoice(2)" style="box-sizing: border-box;"></button>
+            <button class="choice-btn" onclick="selectChoice(3)" style="box-sizing: border-box;"></button>
+            <button class="choice-btn" onclick="selectChoice(4)" style="box-sizing: border-box; display:none;"></button>
+            <button class="choice-btn" onclick="selectChoice(5)" style="box-sizing: border-box; display:none;"></button>
         </div>
         <!-- ここまで -->
         <div id="quiz-timer-display">15</div>
@@ -1207,6 +1232,9 @@ window.onYouTubeIframeAPIReady = () => {
             if (quizInfo.isChoiceMode) {
                 // 選択肢モード中の表示
                 if (choiceArea) choiceArea.style.display = 'none';
+                // ★追加：新しいラウンド開始時、前回の縦書き表示状態を一旦リセットする
+                const qDisplayInit = document.getElementById('quiz-question-display');
+                if (qDisplayInit) qDisplayInit.classList.remove('vertical-left');
                 if (answerInput) {
                     answerInput.disabled = true; 
                     answerInput.placeholder = "選択肢から選んでください";
@@ -1240,13 +1268,19 @@ window.onYouTubeIframeAPIReady = () => {
                 // 3000ms（3秒）など、あなたのカウントダウン秒数に合わせて数値を調整してください
                 setTimeout(() => {
                     if (quizInfo.isChoiceMode && choiceArea) {
-                        choiceArea.style.display = 'flex';
+                        choiceArea.style.display = 'grid'; // ★修正：flexのままだとグリッドレイアウトが上書きされてしまうため修正
+                        // ★追加：動画再生が始まったら、問題文を左端に縦書きで表示して選択肢と重ならないようにする
+                        const qDisplay = document.getElementById('quiz-question-display');
+                        if (qDisplay) qDisplay.classList.add('vertical-left');
                     }
                 }, 5500); 
 
             } else {
                 // 通常モード（イントロ・クイズ・モザイク）
                 if (choiceArea) choiceArea.style.display = 'none';
+                // ★追加：通常モードでは縦書き表示を使わないのでクラスを外しておく
+                const qDisplayReset = document.getElementById('quiz-question-display');
+                if (qDisplayReset) qDisplayReset.classList.remove('vertical-left');
                 if (answerInput) {
                     answerInput.disabled = false;
                     answerInput.placeholder = "答えを入力...";
@@ -1267,6 +1301,8 @@ window.onYouTubeIframeAPIReady = () => {
 
             if(data.videoId && data.videoId !== lastVideoId) {
                 lastVideoId = data.videoId;
+                // ★追加：新しい曲が読み込まれた＝最終結果BGMは上書きされるので、次回また再生できるようフラグを戻す
+                if (typeof isFinalResultsBgmPlaying !== 'undefined') isFinalResultsBgmPlaying = false;
                 if (player && player.cueVideoById) {
                     player.cueVideoById({ 
                         videoId: data.videoId, 
@@ -2294,7 +2330,10 @@ window.onYouTubeIframeAPIReady = () => {
 
             const source = ctx.createBufferSource();
             source.buffer = pichunAudioBuffer;
-            source.connect(ctx.destination);
+            // ★修正：音量を0.8倍に下げる
+            const gainNode = ctx.createGain();
+            gainNode.gain.value = 0.8;
+            source.connect(gainNode).connect(ctx.destination);
             source.start(0);
         } catch (e) {
             console.error('効果音再生エラー:', e);
@@ -3380,6 +3419,8 @@ async function renderRanking() {
             if (cover) cover.style.display = 'flex';
             player.loadVideoById({ videoId: FINAL_RESULTS_BGM_VIDEO_ID, startSeconds: 0 });
             if (!isMuted && player.unMute) player.unMute();
+            // ★修正：音量を0.8倍（80%）に下げる
+            if (player.setVolume) player.setVolume(80);
         } catch (e) {
             console.error('最終結果BGM再生エラー:', e);
         }
