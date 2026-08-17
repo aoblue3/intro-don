@@ -1520,7 +1520,8 @@ window.onYouTubeIframeAPIReady = () => {
                                 ptsDisplay: "0pt",
                                 ptsRaw: 0,
                                 rank: "圏外", // ★ここを「正解」ではなく「圏外」に固定
-                                mode: getCurrentModeLabel() // ★追加：称号集計用のモード記録
+                                mode: getCurrentModeLabel(), // ★追加：称号集計用のモード記録
+                                isDouble: Number(quizInfo.pointMultiplier) > 1 // ★追加：チャンスタイム中だったか記録
                             });
                             update(ref(db, `game/users/${myId}`), {
                                 [`history/round_${currentRoundNum}`]: "0pt",
@@ -1791,10 +1792,14 @@ window.onYouTubeIframeAPIReady = () => {
                                     
                                     if (userHistory && rNum !== currentRoundNum) {
                                         if (!roundDetails[rNum]) {
-                                            roundDetails[rNum] = { pts: "0pt", rank: "圏外" };
+                                            roundDetails[rNum] = { pts: "0pt", rank: "圏外", isDouble: false, mode: "" };
                                         }
                                         // 保存されたそのままのデータをストレートに反映
                                         roundDetails[rNum].pts = userHistory.ptsDisplay || "0pt";
+                                        // ★追加：チャンスタイム（2倍ラウンド）だったかを記録
+                                        roundDetails[rNum].isDouble = !!userHistory.isDouble;
+                                        // ★追加：クイズ・モザイク等の特殊モードだったかを記録
+                                        roundDetails[rNum].mode = userHistory.mode || "";
                                         
                                         // 順位も保存されたデータから復元
                                         const rVal = userHistory.rank;
@@ -1816,9 +1821,13 @@ window.onYouTubeIframeAPIReady = () => {
                               if (currentHistorySnap.exists()) {
                                   const histEntry = currentHistorySnap.val();
                                   if (!roundDetails[currentRoundNum]) {
-                                      roundDetails[currentRoundNum] = { pts: "0pt", rank: "判定中" };
+                                      roundDetails[currentRoundNum] = { pts: "0pt", rank: "判定中", isDouble: false, mode: "" };
                                   }
                                   roundDetails[currentRoundNum].pts = histEntry.ptsDisplay || "0pt";
+                                  // ★追加：チャンスタイム（2倍ラウンド）だったかを記録
+                                  roundDetails[currentRoundNum].isDouble = !!histEntry.isDouble;
+                                  // ★追加：クイズ・モザイク等の特殊モードだったかを記録
+                                  roundDetails[currentRoundNum].mode = histEntry.mode || "";
                                   const rVal = histEntry.rank;
                                   if (rVal === 1) { roundDetails[currentRoundNum].rank = "1位"; total1stCount++; }
                                   else if (rVal === 2) { roundDetails[currentRoundNum].rank = "2位"; total2ndCount++; }
@@ -1839,7 +1848,9 @@ window.onYouTubeIframeAPIReady = () => {
                         let roundListText = "";
                         sortedRounds.forEach(r => {
                             const info = roundDetails[r];
-                            roundListText += `・第${r}問: ${info.pts} 獲得 [早解き: ${info.rank}]\n`;
+                            const doubleTag = info.isDouble ? "🎰チャンスタイム " : "";
+                            const modeTag = getModeDisplayTag(info.mode);
+                            roundListText += `・第${r}問: ${modeTag}${doubleTag}${info.pts} 獲得 [早解き: ${info.rank}]\n`;
                         });
                         if (roundListText === "") roundListText = "なし\n";
 
@@ -2071,7 +2082,8 @@ window.onYouTubeIframeAPIReady = () => {
                         ptsDisplay: displayPtsText,
                         ptsRaw: quizInfo.isQuizMode ? addedPoints : totalInThisRound, // イントロモードはアーティスト分も含めた合計を保存
                         rank: (myRankNum <= 3 && addedPoints > 0) ? myRankNum : "圏外",
-                        mode: getCurrentModeLabel() // ★追加：称号集計用のモード記録
+                        mode: getCurrentModeLabel(), // ★追加：称号集計用のモード記録
+                        isDouble: Number(quizInfo.pointMultiplier) > 1 // ★追加：チャンスタイム中だったか記録
                     });
                 });
 
@@ -2121,7 +2133,8 @@ window.onYouTubeIframeAPIReady = () => {
                     ptsDisplay: artistPtsValue,
                     ptsRaw: addedPoints,
                     rank: "アーティスト正解", // こちらはボーナスがないので文字列のまま
-                    mode: getCurrentModeLabel() // ★追加：称号集計用のモード記録
+                    mode: getCurrentModeLabel(), // ★追加：称号集計用のモード記録
+                    isDouble: Number(quizInfo.pointMultiplier) > 1 // ★追加：チャンスタイム中だったか記録
                 });
 
                 showCenterNotify(`アーティスト正解！+${addedPoints}pt`, "var(--gold)");
@@ -2223,6 +2236,18 @@ window.onYouTubeIframeAPIReady = () => {
         if (quizInfo.isMosaicMode) return 'mosaic';
         if (quizInfo.isQuizMode) return 'quiz';
         return 'intro';
+    };
+
+    // ★追加：履歴表示で使う、モードを分かりやすい日本語タグに変換する共通関数
+    // （通常のイントロモードはタグを付けず、それ以外の特殊モードだけ明記する）
+    const getModeDisplayTag = (mode) => {
+        const map = {
+            'quiz': '📝クイズ ',
+            'mosaic': '🌫️モザイク ',
+            'choice_quiz': '🎮選択肢クイズ ',
+            'choice_mosaic': '🧩選択肢モザイク ',
+        };
+        return map[mode] || '';
     };
 
     const pushChat = (text, isTitle, isArtist, isNear = false, isPass = false) => {
@@ -2723,7 +2748,11 @@ window.loadRandomFromReserve = loadRandomFromReserve; // 👈 この1行を足�
                     else if (rVal === 2) { rankText = "2位"; total2nd++; }
                     else if (rVal === 3) { rankText = "3位"; total3rd++; }
                     else if (typeof rVal === 'string') { rankText = rVal; }
-                    roundLines += ` ・第${rNum}問: ${pts} 獲得 [早解き: ${rankText}]\n`;
+                    // ★追加：チャンスタイム（2倍ラウンド）だったかを表示
+                    const doubleTag = entry.isDouble ? "🎰チャンスタイム " : "";
+                    // ★追加：クイズ・モザイク等の特殊モードだったかを表示
+                    const modeTag = getModeDisplayTag(entry.mode);
+                    roundLines += ` ・第${rNum}問: ${modeTag}${doubleTag}${pts} 獲得 [早解き: ${rankText}]\n`;
                 });
 
                 output += `【${u.name}】（最終スコア: ${u.score || 0}pt）\n`;
@@ -2828,17 +2857,28 @@ async function renderRanking() {
                 if (bonus !== undefined) {
                     if (target.rankIndex === 0) rankPanel.classList.add('winner-anim');
                     update(ref(db, `game/users/${target.userId}`), { score: increment(bonus) });
-                    // ★修正：ループ前に取得済みのデータを使うことで通信遅延を回避
-                    const existingEntry = preloadedHistory[target.userId];
+                    // ★修正：事前取得データに無ければ、その場でもう一度取得し直す（書き込み遅延によるボーナス消失を防ぐ）
+                    let existingEntry = preloadedHistory[target.userId];
+                    if (!existingEntry) {
+                        try {
+                            const freshSnap = await get(ref(db, `game/history/${quizInfo.round}/${target.userId}`));
+                            if (freshSnap.exists()) existingEntry = freshSnap.val();
+                        } catch (e) {
+                            console.error('履歴の再取得に失敗:', e);
+                        }
+                    }
                     const base = existingEntry ? (existingEntry.ptsRaw || 0) : 0;
                     const newPts = base + bonus;
                     // ★追加：エクストラワード正解の印を引き継ぐ
                     const wasExtra = existingEntry && existingEntry.ptsDisplay && existingEntry.ptsDisplay.includes("(ワード正解)");
                     const extraMark = wasExtra ? "(ワード正解)" : "";
-                    const newDisplay = base > 0 ? `${base}pt (+${bonus}pt)${extraMark}` : `0pt`;
+                    // ★修正：baseが0の場合でも、獲得したボーナスの表記は必ず残す
+                    const newDisplay = `${base}pt (+${bonus}pt)${extraMark}`;
                     // ★追加：既存エントリのmode（称号集計用）を引き継ぐ
                     const inheritedMode = (existingEntry && existingEntry.mode) || getCurrentModeLabel();
-                    set(ref(db, `game/history/${quizInfo.round}/${target.userId}`), { ptsDisplay: newDisplay, ptsRaw: newPts, rank: rankNum, mode: inheritedMode });
+                    // ★追加：チャンスタイム（2倍ラウンド）中だったかどうかも記録する
+                    const isDoubleRoundEntry = Number(quizInfo.pointMultiplier) > 1;
+                    set(ref(db, `game/history/${quizInfo.round}/${target.userId}`), { ptsDisplay: newDisplay, ptsRaw: newPts, rank: rankNum, mode: inheritedMode, isDouble: isDoubleRoundEntry });
                 }
             }
         }
@@ -4025,8 +4065,12 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                     if (!roundData) return;
                     const userHistory = roundData[myId];
                     if (userHistory) {
-                        if (!roundDetails[rNum]) roundDetails[rNum] = { pts: "0pt", rank: "圏外" };
+                        if (!roundDetails[rNum]) roundDetails[rNum] = { pts: "0pt", rank: "圏外", isDouble: false, mode: "" };
                         roundDetails[rNum].pts = userHistory.ptsDisplay || "0pt";
+                        // ★追加：チャンスタイム（2倍ラウンド）だったかを記録
+                        roundDetails[rNum].isDouble = !!userHistory.isDouble;
+                        // ★追加：クイズ・モザイク等の特殊モードだったかを記録
+                        roundDetails[rNum].mode = userHistory.mode || "";
                         const rVal = userHistory.rank;
                         if (rVal === 1) { roundDetails[rNum].rank = "1位"; total1stCount++; }
                         else if (rVal === 2) { roundDetails[rNum].rank = "2位"; total2ndCount++; }
@@ -4044,7 +4088,9 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         let roundListText = "";
         sortedRounds.forEach(r => {
             const info = roundDetails[r];
-            roundListText += `・第${r}問: ${info.pts} 獲得 [早解き: ${info.rank}]\n`;
+            const doubleTag = info.isDouble ? "🎰チャンスタイム " : "";
+            const modeTag = getModeDisplayTag(info.mode);
+            roundListText += `・第${r}問: ${modeTag}${doubleTag}${info.pts} 獲得 [早解き: ${info.rank}]\n`;
         });
         if (roundListText === "") roundListText = "なし\n";
 
