@@ -1028,6 +1028,8 @@
         initYouTube();
         // ★追加：参加者なら、主催者の音声配信の待ち受けを開始する
         if (!isAdmin && typeof listenForHostVoice === 'function') listenForHostVoice();
+        // ★追加：参加者が最初に入った時、自動でルールを表示する
+        if (!isAdmin && typeof showRulesModal === 'function') showRulesModal();
     }
 
 // --- YouTube API 初期化 (Firefox安定版) ---
@@ -1447,8 +1449,17 @@ window.onYouTubeIframeAPIReady = () => {
                 if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
 
                 player.unMute();
+                // ★修正：既にウォームアップ処理で正しい位置に巻き戻し済みの場合、不要な二重シークをスキップしてノイズ（動画が飛んだような音）を防ぐ
+                const targetPlayTime = quizInfo.startTimeOffset || 0;
+                let needsSeekOnPlay = true;
+                try {
+                    if (player.getCurrentTime) {
+                        const currentPlayerTime = player.getCurrentTime();
+                        if (Math.abs(currentPlayerTime - targetPlayTime) < 0.5) needsSeekOnPlay = false;
+                    }
+                } catch (e) {}
                 player.playVideo(); 
-                player.seekTo(quizInfo.startTimeOffset || 0, true); 
+                if (needsSeekOnPlay) player.seekTo(targetPlayTime, true); 
                 const correction = 100; 
                 const duration = Math.max(0, (sig.value * 1000) - correction);
                 window.quizTimer = setTimeout(() => { 
@@ -2022,9 +2033,9 @@ window.onYouTubeIframeAPIReady = () => {
                 if (window.is1stPointAwarded) addedPoints = Math.min(addedPoints, 15);
             }
 
-            // ★修正：エクストラワード正解時は、通常の時間帯別ポイントに+5ptを追加する
+            // ★修正：エクストラワード正解時は、通常の時間帯別ポイントに+3ptを追加する（5pt→3ptにナーフ）
             if (isExtra && addedPoints > 0) {
-                addedPoints += 5;
+                addedPoints += 3;
             }
 
             // ★追加：チャンスタイム中（ポイント2倍ラウンド）はここで最終的に倍率をかける
@@ -4225,7 +4236,16 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
             <b style="color: #ffcb28; font-size: 17px;">■ 基本ルール（イントロモード）</b>
             <div style="font-size: 15px; color: #eee; line-height: 1.8; margin: 8px 0 16px 0;">
                 ・曲名またはアーティスト名を入力欄に打ち込んで送信してください。<br>
-                ・<b>早く答えるほど高得点</b>です。再生時間が経つほど、正解時の点数は下がっていきます。<br>
+                ・<b>その回の再生時間（1〜10秒）によって、正解時の基礎ポイントが決まっています。再生時間が短いラウンドほど高得点です：</b><br>
+                <table style="width:100%; border-collapse: collapse; margin: 6px 0 10px 0; font-size: 13.5px;">
+                    <tr style="border-bottom:1px solid #555; color:#ffcb28;"><td style="padding:4px 6px;">再生時間</td><td style="padding:4px 6px;">曲名正解</td><td style="padding:4px 6px;">アーティスト正解</td></tr>
+                    <tr style="border-bottom:1px solid #444;"><td style="padding:4px 6px;">1秒/1.5秒</td><td style="padding:4px 6px;">10pt</td><td style="padding:4px 6px;">5pt</td></tr>
+                    <tr style="border-bottom:1px solid #444;"><td style="padding:4px 6px;">2秒/2.5秒</td><td style="padding:4px 6px;">9pt</td><td style="padding:4px 6px;">4pt</td></tr>
+                    <tr style="border-bottom:1px solid #444;"><td style="padding:4px 6px;">3秒</td><td style="padding:4px 6px;">8pt</td><td style="padding:4px 6px;">3pt</td></tr>
+                    <tr style="border-bottom:1px solid #444;"><td style="padding:4px 6px;">5秒</td><td style="padding:4px 6px;">6pt</td><td style="padding:4px 6px;">2pt</td></tr>
+                    <tr><td style="padding:4px 6px;">10秒</td><td style="padding:4px 6px;">5pt</td><td style="padding:4px 6px;">1pt</td></tr>
+                </table>
+                ・上記に加えて、<b>早解きボーナス</b>（後述）で個人の回答スピードに応じた追加ポイントが入ります。<br>
                 ・曲名とアーティスト名は<b>別々に正解判定</b>されます。アーティスト名を先に当てても得点は入りますが、本命はあくまで曲名です。曲名まで正解すると、そのラウンドで獲得できる<b>最大得点</b>に到達します。<br>
                 ・<b>お手つき（間違った回答）は何度でもできます</b>。減点はありません。<br>
                 ・答えが近い場合は、送信時に自分だけ「<b>おしい！</b>」という表示が出ます（他の人には内容が伏せられた状態で共有されます）。<br>
@@ -4240,7 +4260,7 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
 
             <b style="color: #ffcb28; font-size: 17px;">■ エクストラワード</b>
             <div style="font-size: 15px; color: #eee; line-height: 1.8; margin: 8px 0 16px 0;">
-                ・曲名に加えてエクストラワードが設定されている場合、<b>最初の回答でエクストラワードを言い当てる</b>ことで+5ptのボーナスが入ります。<br>
+                ・曲名に加えてエクストラワードが設定されている場合、<b>最初の回答でエクストラワードを言い当てる</b>ことで+3ptのボーナスが入ります。<br>
                 ・曲名を通常の言い方で先に正解してしまうと、その後からエクストラワードを送っても加算されません。ボーナスを狙うなら、<b>一発目の回答が勝負</b>です。<br>
                 ・正解すると「⭐エクストラワード正解！」と表示されます。
             </div>
@@ -4249,12 +4269,13 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
             <div style="font-size: 15px; color: #eee; line-height: 1.8; margin: 8px 0 16px 0;">
                 ・<b>モザイクモード：</b>映像がぼかされた状態から始まり、時間とともに徐々にはっきりしていきます。<br>
                 ・<b>クイズモード：</b>曲当てではなく、出題される問題文に対してテキストで回答します。<br>
-                ・<b>選択肢クイズ／選択肢モザイク：</b>4つの選択肢ボタンから正しいものをクリックして回答します。誰がどれを選んだかは、正解発表まで他の人には分かりません。
+                ・<b>選択肢クイズ／選択肢モザイク：</b>4つの選択肢ボタンから正しいものをクリックして回答します。誰がどれを選んだかは、正解発表まで他の人には分かりません。<br>
+                ・<b>クイズ系モードの得点の仕組み：</b>クイズ・モザイク・選択肢クイズ・選択肢モザイクは、15秒のカウントダウン制です。正解した瞬間にタイマーに表示されている<b>残り秒数がそのまま獲得ポイント</b>になります（例：残り13秒で正解すれば13pt、残り1秒なら1pt。タイムアップ後の正解は0ptです）。
             </div>
 
             <b style="color: #ffcb28; font-size: 17px;">■ その他の要素</b>
             <div style="font-size: 15px; color: #eee; line-height: 1.8; margin: 8px 0 16px 0;">
-                ・<b>パス機能：</b>その曲に回答するのが難しい場合、パスすることができます。<br>
+                ・<b>パス機能：</b>その曲に回答するのが難しい場合、パスすることができます。<b>パスした後でも、答えが分かれば引き続き回答して得点できます</b>（パスは回答権を失うものではありません）。<br>
                 ・<b>リアクション：</b>画面右側の絵文字ボタンから、得点に関係ないリアクションを送って盛り上がれます。<br>
                 ・<b>🎰チャンスタイム：</b>まれに、その回のラウンドで獲得ポイントが<b>2倍</b>になる特別な演出が入ることがあります。<br>
                 ・<b>ブラインドモード：</b>主催者の演出により、一時的にスコアや順位が誰にも見えなくなることがあります。最終結果発表で明らかになります。
@@ -4266,12 +4287,12 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                 ・タイトルに「！」「？」などの記号が入っていても、省略して打って大丈夫です。記号のあるなしは判定に影響しません。
             </div>
 
-            <b style="color: #ff8a80; font-size: 17px;">■ アニソンイントロドンについて</b>
+            <b style="color: #ff8a80; font-size: 17px;">■ アニソンイントロドンとは</b>
             <div style="font-size: 15px; color: #eee; line-height: 1.8; margin: 8px 0 16px 0;">
-                今回の大会は「アニソンイントロドン」形式で開催します。通常ルールと正解の対象が異なるのでご注意ください。<br><br>
+                「アニソンイントロドン」は、通常のイントロドンとは正解の対象が異なる特別ルールです。<br><br>
                 ・正解として扱われるのは曲名ではなく、その曲が使われている<b>アニメ作品のタイトル</b>です。<br>
                 ・アニメタイトルの<b>略称</b>（略した呼び方）も正解になる場合があります。<br>
-                ・曲名自体は<b>エクストラワード</b>扱いになります。最初の回答で曲名を言い当てると、通常のエクストラワードと同じく+5ptのボーナスが入ります。<br>
+                ・曲名自体は<b>エクストラワード</b>扱いになります。最初の回答で曲名を言い当てると、通常のエクストラワードと同じく+3ptのボーナスが入ります。<br>
                 ・つまり基本はアニメタイトルを当てて得点を取り、狙うなら最初の回答で曲名まで一発で当てて追加ボーナスを狙う、という流れになります。
             </div>
 
@@ -4360,8 +4381,30 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
             const pc = new RTCPeerConnection(RTC_CONFIG);
             hostPeerConnections[participantId] = pc;
 
-            // ★追加：接続状態をコンソールに出す（診断用）
-            pc.oniceconnectionstatechange = () => console.log(`[Voice/Host→${participantId}] ICE状態:`, pc.iceConnectionState);
+            // ★修正：接続状態をコンソールに出す（診断用）＋切断を検知したら自動で再接続する
+            pc.oniceconnectionstatechange = () => {
+                console.log(`[Voice/Host→${participantId}] ICE状態:`, pc.iceConnectionState);
+                if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+                    // ★追加：しばらく待っても回復しない場合は、この参加者だけ接続を張り直す
+                    setTimeout(() => {
+                        if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+                            console.log(`[Voice/Host→${participantId}] 接続断を検知、自動再接続します`);
+                            try { pc.close(); } catch (e) {}
+                            delete hostPeerConnections[participantId];
+                            hostConnectedParticipants.delete(participantId);
+                            // 古いシグナリングデータを掃除してから、新しい接続を張り直す
+                            Promise.all([
+                                remove(ref(db, `game/webrtc/offers/${participantId}`)).catch(() => {}),
+                                remove(ref(db, `game/webrtc/answers/${participantId}`)).catch(() => {}),
+                                remove(ref(db, `game/webrtc/ice/host/${participantId}`)).catch(() => {}),
+                                remove(ref(db, `game/webrtc/ice/participant/${participantId}`)).catch(() => {})
+                            ]).finally(() => {
+                                if (isVoiceBroadcasting) hostConnectToParticipant(participantId);
+                            });
+                        }
+                    }, 4000); // 4秒待っても回復しなければ再接続（一時的な瞬断は自然回復を待つ）
+                }
+            };
             pc.onconnectionstatechange = () => console.log(`[Voice/Host→${participantId}] 接続状態:`, pc.connectionState);
 
             hostMicStream.getTracks().forEach(track => pc.addTrack(track, hostMicStream));
@@ -4400,7 +4443,15 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
     // --- 主催者側：配信開始 ---
     async function startVoiceBroadcast() {
         try {
-            hostMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            // ★修正：ノイズ抑制・エコーキャンセル・自動音量調整を明示的に有効化してクリアな音にする
+            hostMicStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                    channelCount: 1
+                }
+            });
             // ★追加：実際に使われているマイクの状態を確認（診断用）
             const track = hostMicStream.getAudioTracks()[0];
             if (track) {
@@ -4518,8 +4569,21 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                 const pc = new RTCPeerConnection(RTC_CONFIG);
                 participantPeerConnection = pc;
 
-                // ★追加：接続状態をコンソールに出す（診断用）
-                pc.oniceconnectionstatechange = () => console.log('[Voice/参加者] ICE状態:', pc.iceConnectionState);
+                // ★修正：接続状態をコンソールに出す（診断用）＋切断されたら受け入れ準備をリセットする
+                pc.oniceconnectionstatechange = () => {
+                    console.log('[Voice/参加者] ICE状態:', pc.iceConnectionState);
+                    if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+                        setTimeout(() => {
+                            if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+                                console.log('[Voice/参加者] 接続断を検知、主催者からの再接続を待ちます');
+                                try { pc.close(); } catch (e) {}
+                                if (participantPeerConnection === pc) participantPeerConnection = null;
+                                const statusEl = document.getElementById('voice-mic-status');
+                                if (statusEl) statusEl.style.display = "none";
+                            }
+                        }, 4000);
+                    }
+                };
                 pc.onconnectionstatechange = () => console.log('[Voice/参加者] 接続状態:', pc.connectionState);
 
                 pc.ontrack = (event) => {
@@ -4533,15 +4597,37 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                         audioEl.muted = true; // ★Web Audio経由で出力するので、element自体はミュートして二重再生を防ぐ
                         audioEl.play().catch(() => {});
                     }
-                    // ★追加：Web Audio APIのGainNodeで音量を100%以上にブースト（マイクの入力音量が小さい場合の対策）
+                    // ★修正：Web Audio APIで音声を整形してからブーストする（ハイパス→プレゼンスEQ→コンプレッサー→音量ブースト）
                     try {
                         if (!voiceAudioContext) voiceAudioContext = new (window.AudioContext || window.webkitAudioContext)();
                         const source = voiceAudioContext.createMediaStreamSource(event.streams[0]);
+
+                        // ①ハイパスフィルター：低いゴーという雑音（空調音など）をカット
+                        const highpass = voiceAudioContext.createBiquadFilter();
+                        highpass.type = 'highpass';
+                        highpass.frequency.value = 90;
+
+                        // ②プレゼンスEQ：声の聞き取りやすい帯域(3kHz付近)を少し持ち上げてクリアにする
+                        const presenceEQ = voiceAudioContext.createBiquadFilter();
+                        presenceEQ.type = 'peaking';
+                        presenceEQ.frequency.value = 3000;
+                        presenceEQ.Q.value = 1;
+                        presenceEQ.gain.value = 4;
+
+                        // ③コンプレッサー：声の大小のムラを均して聞き取りやすくする
+                        const compressor = voiceAudioContext.createDynamicsCompressor();
+                        compressor.threshold.value = -28;
+                        compressor.knee.value = 20;
+                        compressor.ratio.value = 3;
+                        compressor.attack.value = 0.003;
+                        compressor.release.value = 0.25;
+
                         voiceGainNode = voiceAudioContext.createGain();
                         // ★修正：ミュート中に再接続した場合は0のまま、そうでなければ音量スライダーの現在値を初期ゲインとして使う
                         const volSlider = document.getElementById('voice-volume-slider');
                         voiceGainNode.gain.value = isVoiceMuted ? 0 : (volSlider ? Number(volSlider.value) / 100 : 3.0);
-                        source.connect(voiceGainNode).connect(voiceAudioContext.destination);
+
+                        source.connect(highpass).connect(presenceEQ).connect(compressor).connect(voiceGainNode).connect(voiceAudioContext.destination);
                         if (voiceAudioContext.state === 'suspended') {
                             const enableBtn = document.getElementById('voice-enable-btn');
                             if (enableBtn) enableBtn.style.display = "inline-block";
