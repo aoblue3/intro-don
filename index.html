@@ -1082,6 +1082,24 @@ window.onYouTubeIframeAPIReady = () => {
                     }
                     // ★追加：視聴者のアカウント設定で字幕が強制表示される場合への保険
                     try { event.target.unloadModule('captions'); } catch (e) {}
+
+                    // ★追加：iPhone/iPad対策。「参加する」ボタンのタップから続く一連の流れの中で、
+                    // 無音のまま一瞬だけ再生→即停止させることで、このプレイヤーの「自動再生の許可」を
+                    // あらかじめ得ておく（新しいタップは不要、参加ボタンのタップに便乗する形）
+                    try {
+                        event.target.mute();
+                        event.target.playVideo();
+                        setTimeout(() => {
+                            try {
+                                event.target.pauseVideo();
+                                event.target.seekTo(0, true);
+                                if (!isMuted && event.target.unMute) event.target.unMute();
+                            } catch (e) {}
+                        }, 150);
+                    } catch (e) {
+                        console.error('自動再生の事前許可取得に失敗:', e);
+                    }
+
                     // --- 既存の処理 ---
                     if (typeof listenToSignals === 'function') listenToSignals();
                 },
@@ -4555,6 +4573,13 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                     try { participantPeerConnection.close(); } catch (e) {}
                     participantPeerConnection = null;
                 }
+                // ★追加：配信終了時、音声処理経路も確実に切断しておく
+                try {
+                    if (window.activeVoiceAudioNodes && window.activeVoiceAudioNodes.length > 0) {
+                        window.activeVoiceAudioNodes.forEach(node => { try { node.disconnect(); } catch (e) {} });
+                    }
+                    window.activeVoiceAudioNodes = [];
+                } catch (e) {}
                 const audioEl = document.getElementById('host-voice-audio');
                 if (audioEl) audioEl.srcObject = null;
             }
@@ -4597,6 +4622,15 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                         audioEl.muted = true; // ★Web Audio経由で出力するので、element自体はミュートして二重再生を防ぐ
                         audioEl.play().catch(() => {});
                     }
+                    // ★修正：再接続などでontrackが複数回発火した場合、古い音声経路が残ったまま新しい経路が重なって
+                    // 二重に鳴る（エコーのように聞こえる）ことがあったため、先に古い経路を確実に切断してから作り直す
+                    try {
+                        if (window.activeVoiceAudioNodes && window.activeVoiceAudioNodes.length > 0) {
+                            window.activeVoiceAudioNodes.forEach(node => { try { node.disconnect(); } catch (e) {} });
+                        }
+                        window.activeVoiceAudioNodes = [];
+                    } catch (e) {}
+
                     // ★修正：Web Audio APIで音声を整形してからブーストする（ハイパス→プレゼンスEQ→コンプレッサー→音量ブースト）
                     try {
                         if (!voiceAudioContext) voiceAudioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -4607,20 +4641,20 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                         highpass.type = 'highpass';
                         highpass.frequency.value = 90;
 
-                        // ②プレゼンスEQ：声の聞き取りやすい帯域(3kHz付近)を少し持ち上げてクリアにする
+                        // ②プレゼンスEQ：声の聞き取りやすい帯域(3kHz付近)をごく軽く持ち上げる（強すぎると響き・違和感の原因になるため控えめに）
                         const presenceEQ = voiceAudioContext.createBiquadFilter();
                         presenceEQ.type = 'peaking';
                         presenceEQ.frequency.value = 3000;
-                        presenceEQ.Q.value = 1;
-                        presenceEQ.gain.value = 4;
+                        presenceEQ.Q.value = 0.7;
+                        presenceEQ.gain.value = 2;
 
-                        // ③コンプレッサー：声の大小のムラを均して聞き取りやすくする
+                        // ③コンプレッサー：声の大小のムラを軽く均す（控えめな設定に調整）
                         const compressor = voiceAudioContext.createDynamicsCompressor();
-                        compressor.threshold.value = -28;
-                        compressor.knee.value = 20;
-                        compressor.ratio.value = 3;
-                        compressor.attack.value = 0.003;
-                        compressor.release.value = 0.25;
+                        compressor.threshold.value = -24;
+                        compressor.knee.value = 24;
+                        compressor.ratio.value = 2;
+                        compressor.attack.value = 0.006;
+                        compressor.release.value = 0.3;
 
                         voiceGainNode = voiceAudioContext.createGain();
                         // ★修正：ミュート中に再接続した場合は0のまま、そうでなければ音量スライダーの現在値を初期ゲインとして使う
@@ -4628,6 +4662,8 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                         voiceGainNode.gain.value = isVoiceMuted ? 0 : (volSlider ? Number(volSlider.value) / 100 : 3.0);
 
                         source.connect(highpass).connect(presenceEQ).connect(compressor).connect(voiceGainNode).connect(voiceAudioContext.destination);
+                        // ★追加：次回ontrack発火時に切断できるよう、生成したノードを記録しておく
+                        window.activeVoiceAudioNodes = [source, highpass, presenceEQ, compressor, voiceGainNode];
                         if (voiceAudioContext.state === 'suspended') {
                             const enableBtn = document.getElementById('voice-enable-btn');
                             if (enableBtn) enableBtn.style.display = "inline-block";
