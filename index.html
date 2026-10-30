@@ -2325,6 +2325,214 @@ window.onYouTubeIframeAPIReady = () => {
                 });
         }
     };
+    // ==== JUDGE_CORE_BEGIN ====
+    // ★追加：主催者側採点の「判定・得点計算」の本体。DOMやFirebaseには一切触らない純粋な関数だけを置く。
+    // 旧 sendAnswer / selectChoice / processScore の判定・得点計算を、点数の付き方が変わらないようそのまま移したもの。
+    // tests/judge.test.js が旧コードと結果が一致するかを確かめているので、ここを変えたら必ずテストも流すこと。
+    const judgeCleanText = (str) => {
+        if (!str) return "";
+        return str.toLowerCase()
+            .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
+            .replace(/ゔ/g, 'ブ')
+            .replace(/[ぁ-ん]/g, (s) => String.fromCharCode(s.charCodeAt(0) + 0x60))
+            .replace(/ヴ/g, 'ブ')
+            .replace(/[\s　・．。、，,.\-！!？?～〜♪★☆「」『』()（）:：;；'’"”\/／&]/g, '');
+    };
+    // 選択肢ボタン用（記号だけを取り除く。文字入力用とは別物なので混ぜない）
+    const judgeCleanChoice = (str) => str ? str.toLowerCase().replace(/[\s　・．。、，,.\-！!？?～〜♪★☆「」『』()（）:：;；'’"”\/／&]/g, '') : "";
+    const judgeSimilarity = (s1, s2) => {
+        const l1 = s1.length, l2 = s2.length;
+        if (l1 === 0 || l2 === 0) return 0;
+        const d = Array.from({ length: l1 + 1 }, (_, i) => Array.from({ length: l2 + 1 }, (_, j) => i === 0 ? j : j === 0 ? i : 0));
+        for (let i = 1; i <= l1; i++) {
+            for (let j = 1; j <= l2; j++) {
+                const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
+                d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+            }
+        }
+        return 1 - d[l1][l2] / Math.max(l1, l2);
+    };
+    const judgeModeLabel = (s) => {
+        if (s.isChoiceMode && s.isMosaicMode) return 'choice_mosaic';
+        if (s.isChoiceMode) return 'choice_quiz';
+        if (s.isMosaicMode) return 'mosaic';
+        if (s.isQuizMode) return 'quiz';
+        return 'intro';
+    };
+    // イントロモードの再生秒数ごとの点数（曲名 / アーティスト）
+    const judgeIntroPoints = (sec) => {
+        if (sec === 1 || sec === 1.5) return { titlePoints: 10, artistPoints: 5 };
+        if (sec === 2 || sec === 2.5) return { titlePoints: 9, artistPoints: 4 };
+        if (sec === 3) return { titlePoints: 8, artistPoints: 3 };
+        if (sec === 5) return { titlePoints: 6, artistPoints: 2 };
+        if (sec === 10) return { titlePoints: 5, artistPoints: 1 };
+        return { titlePoints: 0, artistPoints: 0 };
+    };
+
+    // 1件の回答を判定する。
+    // input: { kind: 'text' | 'choice', text }
+    // ctx: {
+    //   settings,            その問題の game/settings（isQuizMode / isChoiceMode / isMosaicMode / pointMultiplier / round）
+    //   secret,              答え { title, artist, extraWord }
+    //   user,                その参加者のこの問題での状態 { hasPointedTitle, hasPointedArtist, roundPointsEarned }
+    //   roundHistory,        その問題の game/history（早解き枠の数え上げ用）
+    //   userId, isAdminUser, revealed（正解発表後か）, started（再生が始まっているか）,
+    //   sec（イントロ：回答時の再生秒数）, quizTimeUp / quizSeconds（クイズ系：回答時のタイマー表示）
+    // }
+    // 戻り値: chat（流すチャットのフラグ。nullなら流さない）, notice（本人に出す通知の種類）,
+    //   userUpdate（users/参加者 への書き込み。scoreDelta は加算する点数）, historyEntry, user（判定後の状態）
+    function judgeAnswer(input, ctx) {
+        const s = ctx.settings || {};
+        const secret = ctx.secret || {};
+        const st = ctx.user || {};
+        const result = {
+            chat: null, notice: null, isTitle: false, isArtist: false, isExtra: false,
+            addedPoints: 0, totalInThisRound: 0, userUpdate: null, historyEntry: null, historyRound: null,
+            user: { hasPointedTitle: !!st.hasPointedTitle, hasPointedArtist: !!st.hasPointedArtist, roundPointsEarned: st.roundPointsEarned || 0 }
+        };
+        const text = input.text;
+        let isTitle = false, isArtist = false, isExtra = false;
+
+        if (input.kind === 'choice') {
+            const normIn = judgeCleanChoice(text);
+            const titleCandidates = String(secret.title || "").split('.').map(c => judgeCleanChoice(c));
+            isTitle = titleCandidates.some(c => c !== "" && c === normIn);
+        } else {
+            const normIn = judgeCleanText(text);
+            const titleCandidates = String(secret.title || "").split('.').map(c => judgeCleanText(c));
+            const artistCandidates = String(secret.artist || "").split('.').map(c => judgeCleanText(c));
+            const extraWordCandidates = (!s.isQuizMode && secret.extraWord)
+                ? String(secret.extraWord).split('.').map(c => judgeCleanText(c))
+                : [];
+            isExtra = extraWordCandidates.some(c => c !== "" && c === normIn);
+            isTitle = titleCandidates.some(c => c !== "" && c === normIn) || isExtra;
+            isArtist = artistCandidates.some(c => c !== "" && c === normIn);
+
+            // おしい判定（正解でもアーティストでもない時だけ）
+            if (!isTitle && !isArtist) {
+                const isNear = [...titleCandidates, ...artistCandidates, ...extraWordCandidates].some(c => c !== "" && judgeSimilarity(c, normIn) >= 0.7);
+                if (isNear) {
+                    result.chat = { isTitle: false, isArtist: false, isNear: true };
+                    result.notice = 'near';
+                    return result;
+                }
+            }
+        }
+        result.isTitle = isTitle;
+        result.isArtist = isArtist;
+        result.isExtra = isExtra;
+
+        // すでにこの問題でタイトル正解済みなら、チャットも流さず何もしない
+        if (isTitle && result.user.hasPointedTitle) return result;
+
+        if (ctx.isAdminUser || ctx.revealed) {
+            result.chat = { isTitle: false, isArtist: false, isNear: false };
+            return result;
+        }
+        if (!ctx.started) {
+            result.chat = { isTitle, isArtist, isNear: false };
+            return result;
+        }
+
+        const { titlePoints, artistPoints } = s.isQuizMode ? { titlePoints: 0, artistPoints: 0 } : judgeIntroPoints(ctx.sec);
+        const multiplier = Number(s.pointMultiplier) || 1;
+        const isDouble = Number(s.pointMultiplier) > 1;
+        const historyRound = s.round || s.currentRound || 1;
+
+        if (isTitle && !result.user.hasPointedTitle) {
+            let addedPoints;
+            if (s.isQuizMode) {
+                addedPoints = ctx.quizTimeUp ? 0 : (ctx.quizSeconds || 0);
+            } else {
+                // ※旧コードの「1位確定後は最大15pt」は参加者側では常に無効だったため入れない
+                addedPoints = Math.max(0, titlePoints - result.user.roundPointsEarned);
+            }
+            if (isExtra && addedPoints > 0) addedPoints += 3;
+            if (addedPoints > 0 && multiplier > 1) addedPoints = addedPoints * multiplier;
+
+            const totalInThisRound = result.user.roundPointsEarned + addedPoints;
+            result.notice = 'title';
+            result.addedPoints = addedPoints;
+            result.totalInThisRound = totalInThisRound;
+
+            // ※旧コードは0ptの時、未定義の変数を参照してエラーになり、users と history に何も書かれなかった。
+            //   その結果（正解フラグは立たず、正解発表時に0pt・圏外で確定する）をそのまま再現する
+            if (addedPoints > 0) {
+                const roundHistory = ctx.roundHistory || {};
+                const correctCount = Object.keys(roundHistory).filter(id => {
+                    if (id === ctx.userId) return false;
+                    const entry = roundHistory[id];
+                    return entry && (entry.rank === 1 || entry.rank === 2 || entry.rank === 3);
+                }).length;
+                const myRankNum = correctCount + 1;
+                const myBase = s.isQuizMode ? addedPoints : totalInThisRound;
+                const displayPtsText = isExtra ? `${myBase}pt(ワード正解)` : `${myBase}pt`;
+
+                result.userUpdate = {
+                    scoreDelta: addedPoints,
+                    hasCorrectedTitle: true,
+                    hasPointedTitle: true,
+                    hasCorrectedByExtra: !!isExtra,
+                    isQuizModeRound: s.isQuizMode ? true : false,
+                    savedPtsText: displayPtsText,
+                    [`history/round_${s.currentRound || 1}`]: displayPtsText
+                };
+                result.historyRound = historyRound;
+                result.historyEntry = {
+                    ptsDisplay: displayPtsText,
+                    ptsRaw: s.isQuizMode ? addedPoints : totalInThisRound,
+                    rank: myRankNum <= 3 ? myRankNum : "圏外",
+                    mode: judgeModeLabel(s),
+                    isDouble
+                };
+                result.user.hasPointedTitle = true;
+            }
+        } else if (!s.isQuizMode && isArtist && !result.user.hasPointedArtist && !result.user.hasPointedTitle) {
+            let addedPoints = Math.max(0, artistPoints - result.user.roundPointsEarned);
+            if (addedPoints > 0 && multiplier > 1) addedPoints = addedPoints * multiplier;
+            if (addedPoints > 0) {
+                const artistPtsValue = `${addedPoints}pt`;
+                result.notice = 'artist';
+                result.addedPoints = addedPoints;
+                result.userUpdate = { scoreDelta: addedPoints, hasCorrectedArtist: true, savedPtsText: artistPtsValue };
+                result.historyRound = historyRound;
+                result.historyEntry = { ptsDisplay: artistPtsValue, ptsRaw: addedPoints, rank: "アーティスト正解", mode: judgeModeLabel(s), isDouble };
+                result.user.roundPointsEarned += addedPoints;
+            }
+            result.user.hasPointedArtist = true;
+        }
+
+        result.chat = { isTitle, isArtist, isNear: false };
+        return result;
+    }
+
+    // 判定結果から、本人の画面に出す通知を組み立てる（旧 sendAnswer / processScore と同じ文言・色）
+    // 戻り値: [{ type: 'center' | 'notice', text, color }]、hideMask（曲名マスク・モザイクを外すか）
+    function judgeNotices(result, settings, kind, text) {
+        const s = settings || {};
+        const out = { items: [], hideMask: false };
+        if (result.notice === 'near') {
+            out.items.push({ type: 'notice', text: "おしい！", color: "#ffa500" });
+        } else if (result.notice === 'title') {
+            const added = result.addedPoints;
+            const extraTag = result.isExtra ? "⭐エクストラワード正解！ " : "";
+            if (!s.isChoiceMode) {
+                if (added > 0) out.items.push({ type: 'center', text: `${extraTag}正解！+${added}pt(合計${result.totalInThisRound}pt)`, color: result.isExtra ? "var(--gold)" : "var(--success-green)" });
+                else out.items.push({ type: 'center', text: `正解！（時間切れ 0pt）`, color: "var(--gray)" });
+            }
+            if (kind !== 'choice') {
+                if (added > 0) out.items.push({ type: 'notice', text: `${extraTag}正解！ ${text} +${added}pt(合計${result.totalInThisRound}pt)`, color: result.isExtra ? "var(--gold)" : "var(--success-green)" });
+                else out.items.push({ type: 'notice', text: `正解！ ${text} (時間切れ 0pt)`, color: "var(--gray)" });
+                out.hideMask = true;
+            }
+        } else if (result.notice === 'artist') {
+            out.items.push({ type: 'center', text: `アーティスト正解！+${result.addedPoints}pt`, color: "var(--gold)" });
+            out.items.push({ type: 'notice', text: `アーティスト正解！ ${text} +${result.addedPoints}pt`, color: "var(--gold)" });
+        }
+        return out;
+    }
+    // ==== JUDGE_CORE_END ====
+
     // --- 1. 得点計算とチャット送信の共通ロジック (これを独立させる) ---
     const processScore = (text, isTitle, isArtist, isExtra = false) => {
         // ★追加ガード：入室から2秒以内は、過去のデータの「残響」による誤動作を防ぐ
