@@ -1268,6 +1268,9 @@
     let quizInfo = { title: "", artist: "", round: 0, isQuizMode: false, isMosaicMode: false, questionText: "", startTimeOffset: 0, volumeRatio: 1.0 };
     let hasPointedTitle = false, hasPointedArtist = false, isRevealedGlobal = false;
     let roundPointsEarned = 0;
+    // ★追加：主催者側採点用
+    let myAnswerTexts = {};    // 回答ID → 本当の文字（自分の弾幕・結果表示用。主催者は判定した全員分）
+    let latestUsersData = {};  // 最新の game/users（主催者の判定で使う）
     let lastVolume = 50, isMuted = false, currentRankingVisible = false, currentFinalResultsVisible = false;
 
     // ★追加：iOS(iPhone/iPad)端末かどうかを判定する（iPadOS13以降のSafariはMacと誤認識されるためタッチ対応も見る）
@@ -1379,6 +1382,9 @@
         if(isAdmin) document.getElementById('admin-panel').style.display = 'block';
         onDisconnect(userRef).update({ isOnline: false, lastSeen: serverTimestamp() });
         setInterval(() => { if(myId) update(ref(db, `game/users/${myId}`), { lastSeen: serverTimestamp(), isOnline: true }); }, 30000);
+        // ★追加：主催者側採点（参加者は自分の判定結果を受け取り、主催者は届いた回答の判定を始める）
+        listenMyAnswerResults();
+        if (isAdmin) startAdminJudge().catch(e => console.error('採点の開始エラー:', e));
         initYouTube();
         // ★追加：参加者なら、主催者の音声配信の待ち受けを開始する
         if (!isAdmin && typeof listenForHostVoice === 'function') listenForHostVoice();
@@ -1762,17 +1768,8 @@ window.onYouTubeIframeAPIReady = () => {
             document.getElementById('round-text').innerText = `ROUND ${quizInfo.round || 0}`;
             if(isAdmin) {
                 document.getElementById('admin-round-text').innerText = `Round: ${quizInfo.round || 0}`;
-                if (quizInfo.isQuizMode) {
-                    document.getElementById('admin-answer-preview').innerHTML = `クイズ答え: <span style="color:var(--success-green)">${quizInfo.title}</span>`;
-                } else {
-                    // ★修正：曲名・アーティスト名を色分けし、エクストラワードがあれば併記する
-                    let previewHtml = `答え: <span style="color:var(--success-green)">${quizInfo.title}</span> / <span style="color:#00d4ff">${quizInfo.artist}</span>`;
-                    if (quizInfo.extraWord) {
-                        const exText = quizInfo.extraWord.split('.').join(' / ');
-                        previewHtml += ` <span style="color:var(--gold); font-weight:bold;">(EX: ${exText})</span>`;
-                    }
-                    document.getElementById('admin-answer-preview').innerHTML = previewHtml;
-                }
+                // ★修正：答えは settings ではなく主催者専用の admin/answers から表示する
+                refreshAdminAnswerPreview();
             }
         });
 
@@ -1890,36 +1887,16 @@ window.onYouTubeIframeAPIReady = () => {
                 // 1. まず最初に開示フラグを true にする
                 isRevealedGlobal = true;
 
-                // ★追記：未回答者の参加履歴を「0pt」で確定させる救済ロジック
-                const currentRoundNum = quizInfo.round || quizInfo.currentRound || 1;
+                // ★修正：未回答者の参加履歴の「0pt」確定は、主催者が正解発表時にまとめて行う（adminRevealAnswer）
 
-                // ★修正：途中参加者が過去のラウンドを汚さないように制限をかける
-                // quizInfo が空だったり、部屋に入った直後の場合は実行しないようにします
-                if (myId && quizInfo && quizInfo.title) { 
-                    get(ref(db, `game/history/${currentRoundNum}/${myId}`)).then((snapshot) => {
-                        if (!snapshot.exists()) {
-                            // ここで「早解き: 正解」と出てしまうのを防ぐため、明示的に「圏外」を指定
-                            set(ref(db, `game/history/${currentRoundNum}/${myId}`), {
-                                ptsDisplay: "0pt",
-                                ptsRaw: 0,
-                                rank: "圏外", // ★ここを「正解」ではなく「圏外」に固定
-                                mode: getCurrentModeLabel(), // ★追加：称号集計用のモード記録
-                                isDouble: Number(quizInfo.pointMultiplier) > 1 // ★追加：チャンスタイム中だったか記録
-                            });
-                            update(ref(db, `game/users/${myId}`), {
-                                [`history/round_${currentRoundNum}`]: "0pt",
-                                savedPtsText: "0pt"
-                            });
-                        }
-                    });
-                }
-                
+                // ★修正：答えは settings に載っていないので、正解発表の合図に載ってきたものを表示する
+                const revealed = (sig.value && typeof sig.value === 'object') ? sig.value : {};
                 // --- ★修正：選択肢モードでも、正解した人以外（主催者・不正解者）にも答えを表示する ---
                 if (quizInfo.isChoiceMode) {
                     const prefix = hasPointedTitle ? '正解！ ' : '';
-                    showNoticeColored(`${prefix}${buildColoredAnswerHtml()}`);
+                    showNoticeColored(`${prefix}${buildColoredAnswerHtml(revealed)}`);
                 } else {
-                    showNoticeColored(buildColoredAnswerHtml());
+                    showNoticeColored(buildColoredAnswerHtml(revealed));
                 }
 
                 // ★修正：手動ミュート中のユーザーはミュートと音量0を維持し、それ以外のユーザーのみ音量を100にして再生します
@@ -2055,6 +2032,7 @@ window.onYouTubeIframeAPIReady = () => {
 
         onValue(ref(db, 'game/users'), (snap) => {
             const usersData = snap.val() || {};
+            latestUsersData = usersData;
             const usersArray = Object.values(usersData);
             
             // 自分(myId)を除いたオンライン人数をカウントする
@@ -2533,262 +2511,313 @@ window.onYouTubeIframeAPIReady = () => {
     }
     // ==== JUDGE_CORE_END ====
 
-    // --- 1. 得点計算とチャット送信の共通ロジック (これを独立させる) ---
-    const processScore = (text, isTitle, isArtist, isExtra = false) => {
-        // ★追加ガード：入室から2秒以内は、過去のデータの「残響」による誤動作を防ぐ
-        if (typeof pageJoinTime !== 'undefined' && Date.now() - pageJoinTime < 2000) {
-            return;
-        }
+    // ==== 主催者側採点：参加者の回答送信と、主催者の判定キュー ====
+    // 参加者は回答を game/answers に書くだけ（答えは参加者のブラウザに届かない）。
+    // 主催者が届いた順に1件ずつ judgeAnswer で判定し、点数・履歴・チャット・本人への結果（game/results）を
+    // 1回の書き込みでまとめて反映する（途中で止まっても、判定済みかどうかが必ず一緒に記録される）。
+    const ANSWER_TOLERANCE_MS = 1000;      // 通信の遅れとして認める時間（再生ボタン直後・クイズの残り秒数）
+    const QUIZ_TIMER_VISIBLE_MS = 15000 - 100; // クイズのタイマー表示が消えるまで（triggerPlayWithCountdown(15) と同じ）
 
-        // ★既存の修正：すでにこの問題でタイトル正解済みの場合は...（以下そのまま）
-        if (isTitle && hasPointedTitle) {
-            return;
-        }
+    // クイズのタイマー表示を読む（旧 processScore と同じ読み方）
+    function readQuizTimerState() {
+        const timerEl = document.getElementById('quiz-timer-display');
+        if (!timerEl || timerEl.style.display === "none" || window.getComputedStyle(timerEl).display === "none") return { timeUp: true, seconds: 0 };
+        const timerText = timerEl.innerText.trim();
+        if (!timerText || timerText === "" || timerText === "0") return { timeUp: true, seconds: 0 };
+        const seconds = parseInt(timerText, 10);
+        if (isNaN(seconds) || seconds <= 0) return { timeUp: true, seconds: 0 };
+        return { timeUp: false, seconds };
+    }
 
-        if(isAdmin || isRevealedGlobal) { 
-            pushChat(text, false, false); 
-            return; 
-        }
+    // --- 参加者：回答を送る ---
+    function submitAnswer(kind, text, choiceIdx) {
+        if (!myId) return;
+        // 入室から2秒以内は、過去のデータの「残響」による誤動作を防ぐ（旧 processScore と同じガード）
+        if (typeof pageJoinTime !== 'undefined' && Date.now() - pageJoinTime < 2000) return;
+        // 画面に出ていたものをそのまま添える（主催者側で実際の再生記録と照らし合わせる）
+        const timer = quizInfo.isQuizMode ? readQuizTimerState() : { timeUp: true, seconds: 0 };
+        const answerRef = push(ref(db, 'game/answers'));
+        myAnswerTexts[answerRef.key] = text;
+        set(answerRef, {
+            userId: myId,
+            userName: myName,
+            kind,
+            text,
+            choiceIdx: kind === 'choice' ? choiceIdx : null,
+            round: quizInfo.round || 0,
+            shownStartTime: quizInfo.startTime || 0,
+            shownSec: quizInfo.currentSeconds || 0,
+            quizTimeUp: timer.timeUp,
+            quizSeconds: timer.seconds,
+            time: serverTimestamp()
+        }).catch(e => console.error('回答の送信エラー:', e));
+    }
 
-        const now = Date.now();
-        const startTime = quizInfo.startTime || 0;
-        
-        // カウントダウン中などの判定
-        if (startTime === 0 || isRevealedGlobal) {
-            pushChat(text, isTitle, isArtist);
-            return;
-        }
-
-        const sec = quizInfo.currentSeconds || 0;
-        let titlePoints = 0; let artistPoints = 0;
-
-        // 得点計算
-        if (quizInfo.isQuizMode) {
-            const elapsed = (now - startTime) / 1000;
-            if (elapsed > 15) titlePoints = 0; else titlePoints = Math.max(1, Math.ceil(15 - elapsed));
-        } else {
-            if (sec === 1 || sec === 1.5) { titlePoints = 10; artistPoints = 5; }
-            else if (sec === 2 || sec === 2.5) { titlePoints = 9; artistPoints = 4; }
-            else if (sec === 3) { titlePoints = 8; artistPoints = 3; }
-            else if (sec === 5) { titlePoints = 6; artistPoints = 2; }
-            else if (sec === 10) { titlePoints = 5; artistPoints = 1; }
-        }
-
-        // 正解時の処理
-        if (isTitle && !hasPointedTitle) {
-
-            let currentSeconds = 0;
-            let isTimeUp = false; // ★タイムアップしているかどうかの目印
-
-            if (quizInfo.isQuizMode) {
-                const timerEl = document.getElementById('quiz-timer-display');
-                
-                // ★最終最強修正：タイマー要素が画面に存在しない、またはスタイルが非表示（displayが"none"）になっている場合は、
-                // 15秒が完全に経過した後の待機時間（17秒目など）であると100%確実に断定し、タイムアップフラグを立てます。
-                if (!timerEl || timerEl.style.display === "none" || window.getComputedStyle(timerEl).display === "none") {
-                    isTimeUp = true;
-                } else {
-                    const timerText = timerEl.innerText.trim();
-                    if (!timerText || timerText === "" || timerText === "0") {
-                        isTimeUp = true;
-                    } else {
-                        currentSeconds = parseInt(timerText, 10);
-                        if (isNaN(currentSeconds) || currentSeconds <= 0) {
-                            isTimeUp = true;
-                        }
-                    }
-                }
+    // --- 参加者：主催者からの判定結果を受け取って表示する ---
+    function listenMyAnswerResults() {
+        onChildAdded(ref(db, `game/results/${myId}`), (snap) => {
+            const r = snap.val();
+            const text = myAnswerTexts[snap.key];
+            if (!r || text === undefined) return; // このページから送っていない回答（再読み込み前など）は表示しない
+            const n = judgeNotices(r, { isChoiceMode: r.isChoiceMode }, r.kind, text);
+            n.items.forEach(it => {
+                if (it.type === 'center') showCenterNotify(it.text, it.color);
+                else showNotice(it.text, it.color);
+            });
+            if (n.hideMask && String(r.round) === String(quizInfo.round || 0)) {
+                if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
+                document.getElementById('quiz-title-mask').style.display = "none";
+                document.getElementById('mosaic-overlay').style.display = "none";
             }
+        });
+    }
 
-            // ★最重要修正：獲得点数の計算
-            let addedPoints = 0;
-            if (quizInfo.isQuizMode) {
-                if (isTimeUp) {
-                    addedPoints = 0;
-                } else {
-                    addedPoints = currentSeconds; 
-                }
-            } else {
-                addedPoints = Math.max(0, titlePoints - roundPointsEarned);
-                if (window.is1stPointAwarded) addedPoints = Math.min(addedPoints, 15);
-            }
-
-            // ★修正：エクストラワード正解時は、通常の時間帯別ポイントに+3ptを追加する（5pt→3ptにナーフ）
-            if (isExtra && addedPoints > 0) {
-                addedPoints += 3;
-            }
-
-            // ★追加：チャンスタイム中（ポイント2倍ラウンド）はここで最終的に倍率をかける
-            if (addedPoints > 0 && quizInfo.pointMultiplier > 1) {
-                addedPoints = addedPoints * quizInfo.pointMultiplier;
-            }
-
-            if (addedPoints >= 0) {
-                const totalInThisRound = roundPointsEarned + addedPoints;
-
-                get(ref(db, `game/history/${quizInfo.round || quizInfo.currentRound || 1}`)).then((snapshot) => {
-                    const historyData = snapshot.val() || {};
-                    
-                    // ★修正：順位枠を消費している人（1〜3位）だけを数える
-                    const correctCount = Object.keys(historyData).filter(id => {
-                        if (id === myId) return false; 
-                        const entry = historyData[id];
-                        // rankが 1, 2, 3 のいずれかである場合のみカウント
-                        return entry && (entry.rank === 1 || entry.rank === 2 || entry.rank === 3);
-                    }).length;
-
-                    const myRankNum = (addedPoints > 0) ? (correctCount + 1) : 4;
-
-                    let currentBonus = 0;
-                    if (addedPoints > 0) {
-                        if (myRankNum === 1) currentBonus = 5;
-                        else if (myRankNum === 2) currentBonus = 3;
-                        else if (myRankNum === 3) currentBonus = 2;
-                    }
-
-                    // 内部処理用の本当の合計値
-                    const finalTotalPoints = addedPoints + currentBonus;
-
-                    // ★バグ修正：クイズモードとイントロモードで表示する点数の基準を正しく分ける
-                    // クイズモード ＝ 今回の秒数(addedPoints)
-                    // イントロモード ＝ アーティスト点も含めたこのラウンドの総得点(totalInThisRound)
-                    let myBase = quizInfo.isQuizMode ? addedPoints : totalInThisRound;
-                    // ★追加：エクストラワード正解の場合、履歴で分かるように印を付ける
-                    const displayPtsText = isExtra ? `${myBase}pt(ワード正解)` : `${myBase}pt`;
-
-                    // --- 1. 個人の更新 ---
-                    update(ref(db, `game/users/${myId}`), { 
-                        score: increment(addedPoints), // ★ここを基礎点(10pt等)のみにする
-                        hasCorrectedTitle: addedPoints > 0 ? true : hasCorrectedTitle,
-                        hasPointedTitle: addedPoints > 0 ? true : hasPointedTitle,
-                        // ★追加：エクストラワード正解だったかどうかをサイドバー表示用に記録する
-                        hasCorrectedByExtra: addedPoints > 0 ? !!isExtra : false,
-                        isQuizModeRound: quizInfo.isQuizMode ? true : false,
-                        savedPtsText: displayPtsText, 
-                        [`history/round_${quizInfo.currentRound || 1}`]: displayPtsText 
-                    });
-
-                    // --- 2. 履歴DBへの保存 ---
-                    set(ref(db, `game/history/${quizInfo.round || quizInfo.currentRound || 1}/${myId}`), {
-                        ptsDisplay: displayPtsText,
-                        ptsRaw: quizInfo.isQuizMode ? addedPoints : totalInThisRound, // イントロモードはアーティスト分も含めた合計を保存
-                        rank: (myRankNum <= 3 && addedPoints > 0) ? myRankNum : "圏外",
-                        mode: getCurrentModeLabel(), // ★追加：称号集計用のモード記録
-                        isDouble: Number(quizInfo.pointMultiplier) > 1 // ★追加：チャンスタイム中だったか記録
-                    });
-                });
-
-                if (!quizInfo.isChoiceMode) {
-                    if (addedPoints > 0) {
-                        const extraTag = isExtra ? "⭐エクストラワード正解！ " : "";
-                        showCenterNotify(`${extraTag}正解！+${addedPoints}pt(合計${totalInThisRound}pt)`, isExtra ? "var(--gold)" : "var(--success-green)");
-                    } else {
-                        showCenterNotify(`正解！（時間切れ 0pt）`, "var(--gray)");
-                    }
-                }
-                // --- 修正箇所：選択肢クリックからの正解時は、左下非表示・モザイク維持・タイトル消去防止 ---
-                if (!quizInfo.isFromChoiceClick) {
-                    if (addedPoints > 0) {
-                        const extraTag = isExtra ? "⭐エクストラワード正解！ " : "";
-                        showNotice(`${extraTag}正解！ ${text} +${addedPoints}pt(合計${totalInThisRound}pt)`, isExtra ? "var(--gold)" : "var(--success-green)");
-                    } else {
-                        showNotice(`正解！ ${text} (時間切れ 0pt)`, "var(--gray)");
-                    }
-                    
-                    if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
-                    document.getElementById('quiz-title-mask').style.display = "none";
-                    document.getElementById('mosaic-overlay').style.display = "none";
-                }
-                // ---------------------------------------------------------------------------------
-                
-                //roundPointsEarned += addedPoints;
-            }
-        } else if (!quizInfo.isQuizMode && isArtist && !hasPointedArtist && !hasPointedTitle) {
-
-            let addedPoints = Math.max(0, artistPoints - roundPointsEarned);
-            // ★追加：チャンスタイム中（ポイント2倍ラウンド）は倍率をかける
-            if (addedPoints > 0 && quizInfo.pointMultiplier > 1) {
-                addedPoints = addedPoints * quizInfo.pointMultiplier;
-            }
-            if (addedPoints > 0) {
-                const artistPtsValue = `${addedPoints}pt`; 
-                const currentRound = quizInfo.round || quizInfo.currentRound || 1;
-
-                update(ref(db, `game/users/${myId}`), { 
-                    score: increment(addedPoints),
-                    hasCorrectedArtist: true,
-                    savedPtsText: artistPtsValue 
-                });
-
-                set(ref(db, `game/history/${currentRound}/${myId}`), {
-                    ptsDisplay: artistPtsValue,
-                    ptsRaw: addedPoints,
-                    rank: "アーティスト正解", // こちらはボーナスがないので文字列のまま
-                    mode: getCurrentModeLabel(), // ★追加：称号集計用のモード記録
-                    isDouble: Number(quizInfo.pointMultiplier) > 1 // ★追加：チャンスタイム中だったか記録
-                });
-
-                showCenterNotify(`アーティスト正解！+${addedPoints}pt`, "var(--gold)");
-                showNotice(`アーティスト正解！ ${text} +${addedPoints}pt`, "var(--gold)");
-                roundPointsEarned += addedPoints;
-            }
-            hasPointedArtist = true;
-        }
-
-        pushChat(text, isTitle, isArtist);
+    // --- 主催者：判定キュー ---
+    const judgeState = {
+        answers: {},     // admin/answers/{問題}：答えと、出題時の設定
+        playLog: {},     // admin/playLog/{問題}：再生ボタンの記録（送った開始時刻・秒数・サーバー時刻）
+        roundState: {},  // admin/roundState/{問題}：正解発表した時刻
+        userRound: {},   // admin/userRoundState/{問題}/{参加者}：その問題での採点状態
+        history: {},     // game/history（主催者だけが書く）
+        judged: {},      // admin/judged：判定済みの回答ID
+        queue: [], running: false, started: false, idleWaiters: []
     };
+
+    async function startAdminJudge() {
+        if (judgeState.started) return;
+        judgeState.started = true;
+        const watch = (path, key, after) => {
+            onValue(ref(db, path), (snap) => {
+                judgeState[key] = snap.val() || {};
+                if (after) after();
+            });
+        };
+        // 判定に使う情報を一通り読み込んでから、回答の受け付けを始める
+        const paths = { answers: 'admin/answers', playLog: 'admin/playLog', roundState: 'admin/roundState', userRound: 'admin/userRoundState', history: 'game/history', judged: 'admin/judged' };
+        const snaps = await Promise.all(Object.values(paths).map(p => get(ref(db, p))));
+        Object.keys(paths).forEach((key, i) => { judgeState[key] = snaps[i].val() || {}; });
+        Object.entries(paths).forEach(([key, p]) => watch(p, key, key === 'answers' ? refreshAdminAnswerPreview : null));
+        refreshAdminAnswerPreview();
+
+        onChildAdded(ref(db, 'game/answers'), (snap) => {
+            if (judgeState.judged[snap.key]) return;
+            judgeState.queue.push({ id: snap.key, a: snap.val() });
+            runJudgeQueue();
+        });
+    }
+
+    async function runJudgeQueue() {
+        if (judgeState.running) return;
+        judgeState.running = true;
+        try {
+            while (judgeState.queue.length > 0) {
+                const item = judgeState.queue.shift();
+                if (judgeState.judged[item.id]) continue;
+                try {
+                    await judgeOneAnswer(item.id, item.a);
+                } catch (e) {
+                    console.error('採点エラー:', e, item);
+                }
+            }
+        } finally {
+            judgeState.running = false;
+            judgeState.idleWaiters.splice(0).forEach(resolve => resolve());
+        }
+    }
+
+    // 判定待ちの回答が無くなるまで待つ（正解発表の前に使う）
+    function waitJudgeIdle(timeoutMs) {
+        if (!judgeState.running && judgeState.queue.length === 0) return Promise.resolve();
+        return new Promise(resolve => {
+            judgeState.idleWaiters.push(resolve);
+            setTimeout(resolve, timeoutMs);
+        });
+    }
+
+    // 回答が「どの再生を見て」答えたものかを決め、イントロの秒数・クイズの残り秒数を出す
+    function resolvePlayForAnswer(round, a, s) {
+        const plays = Object.values(judgeState.playLog[round] || {})
+            .filter(p => p && typeof p.serverTime === 'number')
+            .sort((x, y) => x.serverTime - y.serverTime);
+        const t = Number(a.time) || 0;
+        const notStarted = { started: false, sec: 0, quizTimeUp: true, quizSeconds: 0 };
+        // 参加者の画面ではまだ再生が始まっていなかった（旧：チャットのみ）
+        if (!a.shownStartTime) return notStarted;
+
+        let latestIdx = -1;
+        plays.forEach((p, i) => { if (p.serverTime <= t) latestIdx = i; });
+        const claimedIdx = plays.findIndex(p => p.startTime === a.shownStartTime);
+        let chosen = null;
+        if (claimedIdx >= 0) {
+            if (claimedIdx === latestIdx) chosen = plays[claimedIdx];
+            // 再生ボタンが押された直後は、1つ前の再生を見て答えた回答も認める
+            else if (latestIdx >= 0 && claimedIdx === latestIdx - 1 && t - plays[latestIdx].serverTime <= ANSWER_TOLERANCE_MS) chosen = plays[claimedIdx];
+            // 時刻の誤差で、回答の方が再生記録より先に記録された場合
+            else if (latestIdx < claimedIdx && plays[claimedIdx].serverTime - t <= ANSWER_TOLERANCE_MS && claimedIdx === latestIdx + 1) chosen = plays[claimedIdx];
+        }
+        if (!chosen && latestIdx >= 0) chosen = plays[latestIdx];
+        if (!chosen) return notStarted;
+
+        const out = { started: true, sec: chosen.sec, quizTimeUp: true, quizSeconds: 0 };
+        if (!s.isQuizMode || a.quizTimeUp) return out;
+        // クイズ系：参加者の画面の残り秒数を、サーバー時刻から見て「+1秒の遅れ」までの範囲で採用する
+        const claimed = Number(a.quizSeconds) || 0;
+        if (claimed < 1) return out;
+        const elapsed = Math.max(0, t - Math.max(chosen.serverTime, 0) - ANSWER_TOLERANCE_MS);
+        if (elapsed >= QUIZ_TIMER_VISIBLE_MS) return out;
+        out.quizTimeUp = false;
+        out.quizSeconds = Math.min(claimed, 15 - Math.floor(elapsed / 1000));
+        return out;
+    }
+
+    async function judgeOneAnswer(id, a) {
+        const updates = { [`admin/judged/${id}`]: true };
+        let user = a && a.userId ? latestUsersData[a.userId] : null;
+        // 参加者一覧の読み込み前（主催者がページを開いた直後）でも取りこぼさないよう、無ければ直接確かめる
+        if (a && a.userId && !user) user = (await get(ref(db, `game/users/${a.userId}`))).val();
+        if (!a || !a.userId || !user) {
+            // BAN・退出済みなど、参加者がいない回答は判定しない
+            await update(ref(db), updates);
+            return;
+        }
+        const round = a.round || 0;
+        const info = judgeState.answers[round] || {};
+        const s = info.settings || { round };
+        const secret = { title: info.title || "", artist: info.artist || "", extraWord: info.extraWord || "" };
+        const userState = ((judgeState.userRound[round] || {})[a.userId]) || {};
+
+        let text = String(a.text || "").trim();
+        if (a.kind === 'choice') {
+            // 選択肢は「1回切り」（再読み込みしても最初の1回だけが有効）
+            if (userState.choiceAnswered) {
+                await update(ref(db), updates);
+                return;
+            }
+            const choices = s.choices || [];
+            if (choices[a.choiceIdx] !== undefined) text = choices[a.choiceIdx];
+        }
+        if (!text) {
+            await update(ref(db), updates);
+            return;
+        }
+
+        const rs = judgeState.roundState[round] || {};
+        const revealed = typeof rs.revealedAt === 'number' && Number(a.time) >= rs.revealedAt;
+        const play = resolvePlayForAnswer(round, a, s);
+        const r = judgeAnswer({ kind: a.kind === 'choice' ? 'choice' : 'text', text }, {
+            settings: s, secret, user: userState,
+            roundHistory: judgeState.history[s.round || s.currentRound || 1] || {},
+            userId: a.userId, isAdminUser: a.userId === myId, revealed,
+            started: play.started, sec: play.sec, quizTimeUp: play.quizTimeUp, quizSeconds: play.quizSeconds
+        });
+
+        updates[`admin/userRoundState/${round}/${a.userId}`] = { ...r.user, choiceAnswered: !!userState.choiceAnswered || a.kind === 'choice' };
+        if (r.userUpdate) {
+            const { scoreDelta, ...rest } = r.userUpdate;
+            updates[`game/users/${a.userId}/score`] = increment(scoreDelta);
+            Object.entries(rest).forEach(([k, v]) => { updates[`game/users/${a.userId}/${k}`] = v; });
+        }
+        if (r.historyEntry) updates[`game/history/${r.historyRound}/${a.userId}`] = r.historyEntry;
+        if (r.notice) {
+            updates[`game/results/${a.userId}/${id}`] = {
+                notice: r.notice, addedPoints: r.addedPoints, totalInThisRound: r.totalInThisRound,
+                isExtra: r.isExtra, isChoiceMode: !!s.isChoiceMode, kind: a.kind === 'choice' ? 'choice' : 'text', round
+            };
+        }
+        if (r.chat) {
+            // 正解・おしい・選択肢の回答は、正解発表まで同じ文字数の伏せ字にしておく（DBを覗かれても答えが分からない）
+            const hide = !revealed && (r.chat.isTitle || r.chat.isArtist || r.chat.isNear || !!s.isChoiceMode);
+            const chatKey = push(ref(db, 'game/chats')).key;
+            updates[`game/chats/${chatKey}`] = {
+                userId: a.userId,
+                user: a.userName || user.name || "",
+                text: hide ? "＊".repeat(text.length) : text,
+                isTitle: r.chat.isTitle,
+                isArtist: r.chat.isArtist,
+                isNear: r.chat.isNear,
+                isPass: false,
+                time: Number(a.time) || Date.now(),
+                round: a.round,
+                answerId: id
+            };
+            if (hide) updates[`admin/hiddenChats/${round}/${chatKey}`] = text;
+            myAnswerTexts[id] = text;
+        }
+        await update(ref(db), updates);
+    }
+
+    // 伏せ字にしていたチャットを本当の文字に戻す（正解発表時・次の問題へ進む時）
+    async function restoreHiddenChats(round, updates) {
+        const snap = await get(ref(db, `admin/hiddenChats/${round}`));
+        if (!snap.exists()) return;
+        snap.forEach(c => { updates[`game/chats/${c.key}/text`] = c.val(); });
+        updates[`admin/hiddenChats/${round}`] = null;
+    }
+
+    // --- 主催者：正解発表 ---
+    async function adminRevealAnswer() {
+        const round = quizInfo.round || 0;
+        // 発表前に届いていた回答を先に判定し終える（最大3秒待つ）
+        await waitJudgeIdle(3000);
+        const info = judgeState.answers[round] || {};
+        const updates = { [`admin/roundState/${round}/revealedAt`]: serverTimestamp() };
+        await restoreHiddenChats(round, updates);
+
+        // 未回答者の参加履歴を「0pt・圏外」で確定させる（旧：正解発表の時に各参加者が自分の分を書いていた）
+        if (info.title) {
+            const s = info.settings || {};
+            const historyRound = quizInfo.round || quizInfo.currentRound || 1;
+            const roundHistory = judgeState.history[historyRound] || {};
+            Object.entries(latestUsersData).forEach(([uid, u]) => {
+                if (!u || u.isOnline !== true || roundHistory[uid]) return;
+                updates[`game/history/${historyRound}/${uid}`] = { ptsDisplay: "0pt", ptsRaw: 0, rank: "圏外", mode: judgeModeLabel(s), isDouble: Number(s.pointMultiplier) > 1 };
+                updates[`game/users/${uid}/history/round_${historyRound}`] = "0pt";
+                updates[`game/users/${uid}/savedPtsText`] = "0pt";
+            });
+        }
+        // 選択肢の投票は正解発表まで主催者しか読めないので、発表時に称号集計用へ公開する
+        if (info.settings && info.settings.isChoiceMode) {
+            const votesSnap = await get(ref(db, `game/choice_votes/${round}`));
+            if (votesSnap.exists()) updates[`game/choice_votes_public/${round}`] = votesSnap.val();
+        }
+        await update(ref(db), updates);
+        await sendSignal('reveal', { round, title: info.title || "", artist: info.artist || "", extraWord: info.extraWord || "" });
+    }
+
+    // --- 主催者：アンサーチェック（投票率だけを全員に配る） ---
+    async function adminAnswerCheck() {
+        const round = quizInfo.round || quizInfo.currentRound || 1;
+        const votesSnap = await get(ref(db, `game/choice_votes/${round}`));
+        const counts = [0, 0, 0, 0, 0, 0];
+        if (votesSnap.exists()) Object.values(votesSnap.val()).forEach(v => { if (counts[v] !== undefined) counts[v]++; });
+        await sendSignal('answer_check', { round, counts });
+    }
+
+    // --- 主催者：答えのプレビュー表示 ---
+    function refreshAdminAnswerPreview() {
+        if (!isAdmin) return;
+        const el = document.getElementById('admin-answer-preview');
+        if (!el) return;
+        const info = judgeState.answers[quizInfo.round || 0] || {};
+        if (quizInfo.isQuizMode) {
+            el.innerHTML = `クイズ答え: <span style="color:var(--success-green)">${info.title || ""}</span>`;
+        } else {
+            // 曲名・アーティスト名を色分けし、エクストラワードがあれば併記する
+            let previewHtml = `答え: <span style="color:var(--success-green)">${info.title || ""}</span> / <span style="color:#00d4ff">${info.artist || ""}</span>`;
+            if (info.extraWord) {
+                const exText = info.extraWord.split('.').join(' / ');
+                previewHtml += ` <span style="color:var(--gold); font-weight:bold;">(EX: ${exText})</span>`;
+            }
+            el.innerHTML = previewHtml;
+        }
+    }
 
     // --- 2. キーボード入力用の送信処理 ---
     const sendAnswer = () => {
         const input = document.getElementById('answer-input'), text = input.value.trim();
         if(!text) return;
-
-        const clean = (str) => {
-            if (!str) return "";
-            return str.toLowerCase()
-                .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
-                .replace(/ゔ/g, 'ブ') // ★追加：「ゔ」はひらがな変換範囲(ぁ-ん)から外れるため個別に対応
-                .replace(/[ぁ-ん]/g, (s) => String.fromCharCode(s.charCodeAt(0) + 0x60))
-                .replace(/ヴ/g, 'ブ')
-                .replace(/[\s　・．。、，,.\-！!？?～〜♪★☆「」『』()（）:：;；'’"”\/／&]/g, '');
-        };
-
-        const normIn = clean(text);
-        const titleCandidates = quizInfo.title.split('.').map(c => clean(c));
-        const artistCandidates = quizInfo.artist.split('.').map(c => clean(c));
-        // ★修正：エクストラワードも曲名・アーティスト名と同じく「.」区切りで複数候補に対応
-        const extraWordCandidates = (!quizInfo.isQuizMode && quizInfo.extraWord)
-            ? quizInfo.extraWord.split('.').map(c => clean(c))
-            : [];
-        const isExtraWordMatch = extraWordCandidates.some(c => c !== "" && c === normIn);
-        const isTitle = titleCandidates.some(c => c !== "" && c === normIn) || isExtraWordMatch;
-        const isArtist = artistCandidates.some(c => c !== "" && c === normIn);
-
-        // おしい判定
-        if (!isTitle && !isArtist) {
-            const getSim = (s1, s2) => {
-                const l1 = s1.length, l2 = s2.length;
-                if (l1 === 0 || l2 === 0) return 0;
-                const d = Array.from({ length: l1 + 1 }, (_, i) => Array.from({ length: l2 + 1 }, (_, j) => i === 0 ? j : j === 0 ? i : 0));
-                for (let i = 1; i <= l1; i++) {
-                    for (let j = 1; j <= l2; j++) {
-                        const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
-                        d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
-                    }
-                }
-                return 1 - d[l1][l2] / Math.max(l1, l2);
-            };
-            // ★修正：エクストラワードも「おしい」判定の対象に含める（複数候補すべてをチェック）
-            const isNear = [...titleCandidates, ...artistCandidates, ...extraWordCandidates].some(c => c !== "" && getSim(c, normIn) >= 0.7);
-            if (isNear) {
-                showNotice("おしい！", "#ffa500");
-                pushChat(text, false, false, true); 
-                input.value = ""; return;
-            }
-        }
-
-        processScore(text, isTitle, isArtist, isExtraWordMatch);
         input.value = "";
+        submitAnswer('text', text, null);
     };
 
     // --- 3. 選択肢ボタン用の送信処理 ---
@@ -2797,27 +2826,16 @@ window.onYouTubeIframeAPIReady = () => {
         const btns = document.querySelectorAll('.choice-btn');
         if (!btns[idx]) return;
 
-        const selectedText = btns[idx].innerText;
         btns.forEach(b => b.disabled = true); // 1回切り
         btns[idx].style.background = "var(--accent-blue, #3498db)";
         btns[idx].style.borderColor = "#fff";
-
-        const clean = (str) => str ? str.toLowerCase().replace(/[\s　・．。、，,.\-！!？?～〜♪★☆「」『』()（）:：;；'’"”\/／&]/g, '') : "";
-        const normIn = clean(selectedText);
-        const titleCandidates = quizInfo.title.split('.').map(c => clean(c));
-        const isTitle = titleCandidates.some(c => c !== "" && c === normIn);
-
-        // --- 修正箇所：選択肢モードからの判定であることを一時的なプロパティで付与 ---
-        quizInfo.isFromChoiceClick = true;
 
         // ★追加：後で「何％の人がどの選択肢を選んだか」を集計できるよう、選んだ選択肢のインデックスを記録
         const voteRound = quizInfo.round || quizInfo.currentRound || 1;
         set(ref(db, `game/choice_votes/${voteRound}/${myId}`), idx).catch(() => {});
 
-        processScore(selectedText, isTitle, false); 
-
-        // 処理が終わったら目印を解除
-        quizInfo.isFromChoiceClick = false;
+        const choiceText = (quizInfo.choices && quizInfo.choices[idx] !== undefined) ? quizInfo.choices[idx] : btns[idx].innerText;
+        submitAnswer('choice', choiceText, idx);
     };
 
     // ★追加：現在のラウンドのモードを文字列で判定する（称号集計で使用）
@@ -2858,13 +2876,15 @@ window.onYouTubeIframeAPIReady = () => {
     const showNotice = (t, c) => { const n = document.getElementById('result-notice'); n.innerText = t; n.style.color = c; n.style.display = "block"; };
     // ★追加：曲名・アーティスト名・エクストラワードをそれぞれ色分けして表示する（HTML対応版）
     const showNoticeColored = (html) => { const n = document.getElementById('result-notice'); n.innerHTML = html; n.style.color = ""; n.style.display = "block"; };
-    const buildColoredAnswerHtml = () => {
+    const buildColoredAnswerHtml = (answer) => {
+        // ★修正：答えは正解発表の合図に載ってきたもの（answer）を使う
+        const a = answer || {};
         // ★修正：選択肢クイズ／選択肢モザイクにはアーティストの概念が無いので、曲名（正解の選択肢）だけを表示する
         let html = quizInfo.isChoiceMode
-            ? `<span style="color:var(--success-green)">${quizInfo.title}</span>`
-            : `<span style="color:var(--success-green)">${quizInfo.title}</span> / <span style="color:#00d4ff">${quizInfo.artist}</span>`;
-        if (quizInfo.extraWord) {
-            const exText = quizInfo.extraWord.split('.').join(' / ');
+            ? `<span style="color:var(--success-green)">${a.title}</span>`
+            : `<span style="color:var(--success-green)">${a.title}</span> / <span style="color:#00d4ff">${a.artist}</span>`;
+        if (a.extraWord) {
+            const exText = a.extraWord.split('.').join(' / ');
             html += ` <span style="color:var(--gold); font-weight:bold;">(EX: ${exText})</span>`;
         }
         return html;
@@ -2874,13 +2894,17 @@ window.onYouTubeIframeAPIReady = () => {
         // パス信号の場合、主催者以外には何も表示せず終了する
         if (m.isPass && !isAdmin) return;
 
+        // ★追加：正解・おしい・選択肢の回答は、正解発表まで伏せ字でDBに入っている。
+        // 自分の回答（と主催者が判定した回答）は手元に本当の文字があるので、そちらを表示する
+        const realText = (m.answerId && myAnswerTexts[m.answerId] !== undefined) ? myAnswerTexts[m.answerId] : m.text;
+
         // 表示する文字を決める変数
-        let displayText = m.text;
+        let displayText = realText;
 
         // --- おしい！時の出し分け処理 ---
         if (m.isNear) {
             if (isAdmin || m.userId === myId) {
-                displayText = `${m.text}（おしい！）`;
+                displayText = `${realText}（おしい！）`;
             } else {
                 const masked = "＊".repeat(m.text.length);
                 displayText = `${masked}（おしい！）`;
@@ -3611,12 +3635,23 @@ window.onYouTubeIframeAPIReady = () => {
         await set(ref(db, 'game/signal_time'), 0);
         const currentSettingsSnap = await get(ref(db, 'game/settings'));
         const keepClosed = currentSettingsSnap.val()?.isClosed || false;
+        // ★追加：答えは参加者が読める settings には載せず、主催者専用の admin/answers に置く。
+        // あわせて前の問題で伏せ字にしたチャットを戻し、この問題の採点状態をまっさらにする
+        const answerUpdates = {
+            [`admin/answers/${nextRound}`]: {
+                title: aText, artist: artText, extraWord: extraWord,
+                settings: { round: nextRound, isQuizMode: isQuiz, isMosaicMode: isMosaic, isChoiceMode: isChoice, choices: shuffledChoices, pointMultiplier: isDouble ? 2 : 1 }
+            },
+            [`admin/playLog/${nextRound}`]: null,
+            [`admin/roundState/${nextRound}`]: null,
+            [`admin/userRoundState/${nextRound}`]: null
+        };
+        if (quizInfo.round !== undefined) await restoreHiddenChats(quizInfo.round || 0, answerUpdates);
+        await update(ref(db), answerUpdates);
         // --- 修正箇所：Firebaseへの設定送信（選択肢モード対応） ---
-        await set(ref(db, 'game/settings'), { 
-            videoId: vid, 
-            title: aText, 
-            artist: artText, 
-            round: nextRound, 
+        await set(ref(db, 'game/settings'), {
+            videoId: vid,
+            round: nextRound,
             isQuizMode: isQuiz, 
             isMosaicMode: isMosaic, 
             isChoiceMode: isChoice,     // ★追加
@@ -3628,7 +3663,6 @@ window.onYouTubeIframeAPIReady = () => {
             // ★超重要：次のラウンドに進むこの瞬間に、そのラウンドが「クイズモード（選択肢含む）」なのか「イントロモード」なのかの
             // 決定的なフラグを、過去の履歴が壊されないための防衛策として、設定データ（settings）の中に正しく刻み込んで送信します。
             isQuizModeRound: (isQuiz || isChoice) ? true : false,
-            extraWord: extraWord, // ★追加：エクストラポイント対象ワード（イントロモードのみ判定で使用）
             pointMultiplier: isDouble ? 2 : 1, // ★追加：チャンスタイム中は2倍
             pendingChanceEffectId: chanceEffectId || null // ★追加：このラウンドの前に流れる派手な演出のID（無ければnull）
         });
@@ -3665,11 +3699,18 @@ window.loadRandomFromReserve = loadRandomFromReserve; // 👈 この1行を足�
             
             // ★追加：確定履歴（history）を完全に削除
             await remove(ref(db, 'game/history'));
+            // ★追加：主催者側採点のデータ（回答・判定結果・答え・再生記録など）も削除
+            judgeState.queue = [];
+            await update(ref(db), {
+                'game/answers': null, 'game/results': null,
+                'admin/answers': null, 'admin/playLog': null, 'admin/roundState': null,
+                'admin/userRoundState': null, 'admin/judged': null, 'admin/hiddenChats': null
+            });
 
             const settingsSnap = await get(ref(db, 'game/settings'));
             const currentIsClosed = settingsSnap.val()?.isClosed || false;
-            await set(ref(db, 'game/settings'), { 
-                videoId: 'dQw4w9WgXcQ', title: '', artist: '', round: 0, 
+            await set(ref(db, 'game/settings'), {
+                videoId: 'dQw4w9WgXcQ', round: 0,
                 isQuizMode: false, isMosaicMode: false, 
                 isChoiceMode: false, 
                 choices: [], 
@@ -3979,12 +4020,11 @@ async function renderRanking() {
     }
 
     // ★追加：選択肢クイズのアンサーチェック（正解を明かさず、各選択肢の投票率だけを表示する）
-    async function showChoiceVoteResults(round) {
+    async function showChoiceVoteResults(value) {
         try {
-            const votesSnap = await get(ref(db, `game/choice_votes/${round}`));
-            const votes = votesSnap.exists() ? Object.values(votesSnap.val()) : [];
-            const counts = [0, 0, 0, 0, 0, 0];
-            votes.forEach(v => { if (counts[v] !== undefined) counts[v]++; });
+            // ★修正：投票は主催者しか読めないので、主催者が集計して合図に載せた票数を使う
+            const counts = (value && Array.isArray(value.counts)) ? value.counts.slice(0, 6) : [0, 0, 0, 0, 0, 0];
+            while (counts.length < 6) counts.push(0);
             const total = counts.reduce((a, b) => a + b, 0);
 
             const btns = document.querySelectorAll('.choice-btn');
@@ -4024,7 +4064,8 @@ async function renderRanking() {
             get(ref(db, 'game/chats')).catch(e => { console.error('チャット取得失敗:', e); return null; }),
             get(ref(db, 'game/reactions')).catch(e => { console.error('リアクション取得失敗:', e); return null; }),
             get(ref(db, 'game/history')).catch(e => { console.error('履歴取得失敗:', e); return null; }),
-            get(ref(db, 'game/choice_votes')).catch(e => { console.error('選択肢投票取得失敗:', e); return null; })
+            // ★修正：投票は正解発表時に主催者が公開した分（choice_votes_public）を使う
+            get(ref(db, 'game/choice_votes_public')).catch(e => { console.error('選択肢投票取得失敗:', e); return null; })
         ]);
 
         // ★追加：この先どこかでエラーが起きても、それまでに計算できた称号は失わずに返せるようにする
@@ -4630,7 +4671,9 @@ async function renderRanking() {
             await new Promise(r => setTimeout(r, 1000));
         }
         const playTime = Date.now();
-        if (quizInfo.isQuizMode || (isFirstPlayOfRound && (sec === 1 || sec === 1.5))) await set(ref(db, 'game/signal_time'), playTime); 
+        if (quizInfo.isQuizMode || (isFirstPlayOfRound && (sec === 1 || sec === 1.5))) await set(ref(db, 'game/signal_time'), playTime);
+        // ★追加：主催者側採点用に、再生の記録（参加者に送る開始時刻・秒数・サーバー時刻）を残す
+        await push(ref(db, `admin/playLog/${quizInfo.round || 0}`), { startTime: playTime, sec, serverTime: serverTimestamp() });
         await update(ref(db, 'game/settings'), { currentSeconds: sec, startTime: playTime });
         await set(ref(db, 'game/signal'), { type: 'play', value: sec, time: playTime });
     };
@@ -4688,8 +4731,8 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         document.getElementById('btn-play-10').onclick = () => triggerPlayWithCountdown(10);
         // ★追加：アンサーチェック（正解を明かさず、投票率だけを全員に公開する）
         document.getElementById('btn-answer-check').onclick = () => {
-            const round = quizInfo.round || quizInfo.currentRound || 1;
-            sendSignal('answer_check', round);
+            // ★修正：投票は主催者しか読めないので、主催者が集計した票数を合図に載せて配る
+            adminAnswerCheck().catch(e => console.error('アンサーチェック集計エラー:', e));
         };
 
         // ★追加：現在の問題（曲名・アーティスト・エクストラワード・選択肢の正解）をその場で修正する
@@ -4700,10 +4743,11 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
 
         document.getElementById('btn-fix-answer').onclick = () => {
             if (!fixAnswerModal) return;
-            // 現在の値を入力欄に反映
-            document.getElementById('fix-title-input').value = quizInfo.title || '';
-            document.getElementById('fix-artist-input').value = quizInfo.artist || '';
-            document.getElementById('fix-extraword-input').value = quizInfo.extraWord || '';
+            // 現在の値を入力欄に反映（★修正：答えは主催者専用の admin/answers から読む）
+            const currentAnswer = judgeState.answers[quizInfo.round || 0] || {};
+            document.getElementById('fix-title-input').value = currentAnswer.title || '';
+            document.getElementById('fix-artist-input').value = currentAnswer.artist || '';
+            document.getElementById('fix-extraword-input').value = currentAnswer.extraWord || '';
 
             if (quizInfo.isChoiceMode && quizInfo.choices && quizInfo.choices.length > 0) {
                 // 選択肢モードの時は、曲名欄の代わりに「どれが正解か」を選ぶプルダウンを出す
@@ -4714,7 +4758,7 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                     const opt = document.createElement('option');
                     opt.value = c;
                     opt.innerText = `${i + 1}: ${c}`;
-                    if (c === quizInfo.title) opt.selected = true;
+                    if (c === currentAnswer.title) opt.selected = true;
                     fixChoiceSelect.appendChild(opt);
                 });
             } else {
@@ -4745,8 +4789,8 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
             }
 
             try {
-                // ★settingsの該当項目だけを上書きする（round・videoId等は一切触らない）
-                await update(ref(db, 'game/settings'), updates);
+                // ★修正：答えは settings ではなく主催者専用の admin/answers の該当項目だけを上書きする
+                await update(ref(db, `admin/answers/${quizInfo.round || 0}`), updates);
                 if (fixAnswerModal) fixAnswerModal.style.display = 'none';
                 alert('修正しました。以降の回答から反映されます。');
             } catch (e) {
@@ -4759,7 +4803,8 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
             if (window.titleMaskTimer) clearTimeout(window.titleMaskTimer);
             document.getElementById('quiz-title-mask').style.display = "none";
             document.getElementById('mosaic-overlay').style.display = "none";
-            sendSignal('reveal', true);
+            // ★修正：届いていた回答の判定を終えてから、答えを載せて正解発表する
+            adminRevealAnswer().catch(e => { console.error('正解発表エラー:', e); alert('正解発表に失敗しました'); });
         };
         document.getElementById('btn-toggle-rank').onclick = async () => {
             currentRankingVisible = !currentRankingVisible;
@@ -5182,7 +5227,10 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
 
         // ★ボタンを押した時だけ一度だけ取得する（常時監視はしないので通信量は増えない）
         try {
-            const snap = await get(ref(db, 'game/chats'));
+            // ★追加：正解発表前で伏せ字のチャットは、主催者専用に取っておいた本当の文字で表示する
+            const [snap, hiddenSnap] = await Promise.all([get(ref(db, 'game/chats')), get(ref(db, 'admin/hiddenChats'))]);
+            const hiddenTexts = {};
+            if (hiddenSnap.exists()) hiddenSnap.forEach(r => { r.forEach(c => { hiddenTexts[c.key] = c.val(); }); });
             const bodyEl = document.getElementById('chatlog-body');
             if (!bodyEl) return; // モーダルが閉じられていたら何もしない
 
@@ -5192,7 +5240,7 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
             }
 
             const messages = [];
-            snap.forEach(c => { const m = c.val(); if (m) messages.push(m); });
+            snap.forEach(c => { const m = c.val(); if (m) messages.push(hiddenTexts[c.key] !== undefined ? { ...m, text: hiddenTexts[c.key] } : m); });
             messages.sort((a, b) => (a.time || 0) - (b.time || 0));
 
             let html = '';
