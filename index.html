@@ -1025,6 +1025,7 @@
             <input type="password" id="admin-pass-input" placeholder="パスワード" autocomplete="current-password">
             <button type="button" id="btn-admin-login-submit">入室</button>
         </div>
+        <div id="setup-hint" style="display:none; margin-top:8px; font-size:13px; font-weight:bold; color:#e2492f;"></div>
         <button id="admin-close-lock" style="display: block; width: 100%; margin-top: 10px; opacity: 0.5; font-size: 10px; border: none; background: none; cursor: pointer; color: #7a5a40;">[管理設定: 部屋の開放/閉鎖]</button>
     </div>
 </div>
@@ -3659,6 +3660,14 @@ window.onYouTubeIframeAPIReady = () => {
         setTimeout(() => div.remove(), 3300);
     };
 
+    // ★追加：入場画面のお知らせ表示（ポップアップが使えない環境でも見えるよう、画面内に出す）
+    function showSetupHint(text) {
+        const el = document.getElementById('setup-hint');
+        if (!el) return;
+        el.textContent = text;
+        el.style.display = text ? 'block' : 'none';
+    }
+
     const sendSignal = (type, value) => set(ref(db, 'game/signal'), { type, value, time: Date.now() });
 
     const loadNextFromReserve = async (isRandom = false, isDouble = false, chanceEffectId = null) => {
@@ -4955,7 +4964,7 @@ async function renderRanking() {
         const submitAdminLogin = async () => {
             const pass = adminPassInput.value;
             if (!pass) return;
-            if (!nameInput.value.trim()) return alert("名前を入力してください");
+            if (!nameInput.value.trim()) { showSetupHint("名前を入力してください"); nameInput.focus(); return; }
 
             try {
                 // ★修正：DB上の平文パスワード比較をやめ、Firebase Authenticationでの本物のログインに一本化
@@ -4966,7 +4975,7 @@ async function renderRanking() {
                 prepareJoin('admin');
             } catch (error) {
                 console.error("管理者ログインエラー:", error);
-                alert("パスワードが違います");
+                showSetupHint("パスワードが違います");
             }
         };
         document.getElementById('btn-admin-login-submit').onclick = submitAdminLogin;
@@ -5108,19 +5117,24 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         };
         // --- 修正箇所ここから ---
         document.getElementById('admin-close-lock').onclick = async () => {
-            // ★変更：入場画面のパスワード欄に入力済みならそれを使う（未入力なら従来どおり聞く）
-            const typedPass = document.getElementById('admin-pass-input').value;
-            const pass = typedPass || prompt("主催者パスワードを入力してください");
-            if (!pass) return;
+            // ★変更：ポップアップは使わず、入場画面のパスワード欄に入力したものを使う
+            const passInput = document.getElementById('admin-pass-input');
+            const pass = passInput.value;
+            if (!pass) {
+                document.getElementById('admin-login-form').classList.add('open');
+                showSetupHint("主催者パスワードを入力してください");
+                passInput.focus();
+                return;
+            }
             try {
                 // ★修正：DB上の平文パスワード比較をやめ、Firebase Authenticationでの本物のログインに一本化
                 await signInWithEmailAndPassword(auth, ADMIN_AUTH_EMAIL, pass);
                 const isNowClosed = document.getElementById('btn-join-player').style.display === "none";
                 await update(ref(db, 'game/settings'), { isClosed: !isNowClosed });
-                alert(!isNowClosed ? "ルームを閉鎖しました。" : "ルームを開放しました。");
+                showSetupHint(!isNowClosed ? "ルームを閉鎖しました。" : "ルームを開放しました。");
             } catch (error) {
                 console.error("認証エラー:", error);
-                alert("パスワードが違います");
+                showSetupHint("パスワードが違います");
             }
         };
 // --- 修正箇所ここまで ---
