@@ -1334,8 +1334,8 @@
             <span id="voice-mic-status" style="font-size:11px; color:#0f0; margin: 0 5px; display:none;">🎙️主催者接続中</span>
             <button id="voice-enable-btn" style="display:none; background:var(--gold); color:#000; border:none; border-radius:15px; padding:6px 12px; cursor:pointer; font-weight:bold; margin: 0 5px;">🔊 音声を有効にする</button>
             <span id="voice-mute-btn" style="cursor:pointer; display:none; margin: 0 5px;" title="主催者音声のミュート切替">🔊</span>
-            <input type="range" id="voice-volume-slider" min="0" max="500" value="300" style="display:none; width:70px; vertical-align:middle;" title="主催者音声の音量">
-            <span id="voice-volume-val" style="font-size:11px; min-width:32px; display:none;">300%</span>
+            <input type="range" id="voice-volume-slider" min="0" max="500" value="50" style="display:none; width:70px; vertical-align:middle;" title="主催者音声の音量">
+            <span id="voice-volume-val" style="font-size:11px; min-width:32px; display:none;">50%</span>
             <audio id="host-voice-audio" autoplay playsinline></audio>
         </div>
         <div id="theme-picker">
@@ -5842,8 +5842,27 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
     let hostPeerConnections = {}; // { participantId: RTCPeerConnection }
     let hostConnectedParticipants = new Set(); // 既に接続済み/接続処理中の参加者ID
     let participantPeerConnection = null; // 参加者側の1本だけの接続
+    let participantIceUnsub = null; // ★追加：参加者側のICE受信監視の解除関数
     let voiceAudioContext = null; // ★追加：音量ブースト用のWeb Audio APIコンテキスト
     let voiceGainNode = null; // ★追加：音量ブースト用のGainNode
+    let hostPeerUnsubs = {}; // ★追加：{ participantId: [監視の解除関数] }（接続を閉じる時に止める）
+    let stopHostUsersWatch = null; // ★追加：配信中だけ動かす「参加者の出入り」監視の解除関数
+
+    // ★追加：主催者側で、ある参加者との接続を閉じて接続情報を掃除する
+    function hostDropParticipant(participantId) {
+        const pc = hostPeerConnections[participantId];
+        if (pc) { try { pc.close(); } catch (e) {} }
+        delete hostPeerConnections[participantId];
+        (hostPeerUnsubs[participantId] || []).forEach(fn => { try { fn(); } catch (e) {} });
+        delete hostPeerUnsubs[participantId];
+        hostConnectedParticipants.delete(participantId);
+        return Promise.all([
+            remove(ref(db, `game/webrtc/offers/${participantId}`)).catch(() => {}),
+            remove(ref(db, `game/webrtc/answers/${participantId}`)).catch(() => {}),
+            remove(ref(db, `game/webrtc/ice/host/${participantId}`)).catch(() => {}),
+            remove(ref(db, `game/webrtc/ice/participant/${participantId}`)).catch(() => {})
+        ]);
+    }
 
     // --- 主催者側：特定の参加者1人への接続を確立する ---
     async function hostConnectToParticipant(participantId) {
@@ -5861,18 +5880,11 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                 if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
                     // ★追加：しばらく待っても回復しない場合は、この参加者だけ接続を張り直す
                     setTimeout(() => {
+                        if (hostPeerConnections[participantId] !== pc) return; // 既に別の接続に張り替え済み
                         if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
                             console.log(`[Voice/Host→${participantId}] 接続断を検知、自動再接続します`);
-                            try { pc.close(); } catch (e) {}
-                            delete hostPeerConnections[participantId];
-                            hostConnectedParticipants.delete(participantId);
                             // 古いシグナリングデータを掃除してから、新しい接続を張り直す
-                            Promise.all([
-                                remove(ref(db, `game/webrtc/offers/${participantId}`)).catch(() => {}),
-                                remove(ref(db, `game/webrtc/answers/${participantId}`)).catch(() => {}),
-                                remove(ref(db, `game/webrtc/ice/host/${participantId}`)).catch(() => {}),
-                                remove(ref(db, `game/webrtc/ice/participant/${participantId}`)).catch(() => {})
-                            ]).finally(() => {
+                            hostDropParticipant(participantId).finally(() => {
                                 if (isVoiceBroadcasting) hostConnectToParticipant(participantId);
                             });
                         }
@@ -5884,33 +5896,41 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
             hostMicStream.getTracks().forEach(track => pc.addTrack(track, hostMicStream));
 
             pc.onicecandidate = (event) => {
-                if (event.candidate) {
-                    push(ref(db, `game/webrtc/ice/host/${participantId}`), event.candidate.toJSON());
+                if (event.candidate && hostPeerConnections[participantId] === pc && hostPeerUnsubs[participantId]) {
+                    push(ref(db, `game/webrtc/ice/host/${participantId}`), { ...event.candidate.toJSON(), sid: pc._voiceSid || null });
                 }
             };
 
+            // ★追加：接続ごとに番号（sid）を付け、参加者が「新しい接続の申し込み」だと見分けられるようにする
+            const sid = push(ref(db, 'game/webrtc/offers')).key;
+            pc._voiceSid = sid;
+            const unsubs = [];
+            hostPeerUnsubs[participantId] = unsubs;
+
             // 参加者からのICE candidateを受信（新規追加分だけ処理）
-            onChildAdded(ref(db, `game/webrtc/ice/participant/${participantId}`), (snap) => {
+            unsubs.push(onChildAdded(ref(db, `game/webrtc/ice/participant/${participantId}`), (snap) => {
                 const candidate = snap.val();
-                if (candidate && pc.signalingState !== 'closed') {
-                    pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+                if (candidate && candidate.sid === sid && pc.signalingState !== 'closed') {
+                    const { sid: _sid, ...cand } = candidate;
+                    pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
                 }
-            });
+            }));
 
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
-            await set(ref(db, `game/webrtc/offers/${participantId}`), { sdp: offer.sdp, type: offer.type });
+            if (hostPeerConnections[participantId] !== pc) return; // 準備中に閉じられた
+            await set(ref(db, `game/webrtc/offers/${participantId}`), { sdp: offer.sdp, type: offer.type, sid });
 
-            // 参加者からのanswerを待つ
-            onValue(ref(db, `game/webrtc/answers/${participantId}`), (snap) => {
+            // 参加者からのanswerを待つ（この接続番号への返事だけ受け取る）
+            unsubs.push(onValue(ref(db, `game/webrtc/answers/${participantId}`), (snap) => {
                 const answer = snap.val();
-                if (answer && pc.signalingState === 'have-local-offer') {
-                    pc.setRemoteDescription(new RTCSessionDescription(answer)).catch(() => {});
+                if (answer && answer.sid === sid && pc.signalingState === 'have-local-offer') {
+                    pc.setRemoteDescription(new RTCSessionDescription({ type: answer.type, sdp: answer.sdp })).catch(() => {});
                 }
-            });
+            }));
         } catch (e) {
             console.error("音声接続エラー(主催者側):", e);
-            hostConnectedParticipants.delete(participantId);
+            hostDropParticipant(participantId);
         }
     }
 
@@ -5947,27 +5967,33 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         // ★追加：参加者側に配信中であることを伝えるフラグ
         await set(ref(db, 'game/webrtc/broadcasting'), true);
 
-        // 現在オンラインの参加者全員に接続
-        const usersSnap = await get(ref(db, 'game/users'));
-        if (usersSnap.exists()) {
-            usersSnap.forEach(child => {
+        // ★修正：現在オンラインの参加者全員に接続し、配信中に途中から入ってきた人・再読み込みした人にも自動で接続する
+        //   （以前はページを開いた直後＝ログイン前にこの監視を始めていたため、読み取りを拒否されて止まっていた）
+        if (stopHostUsersWatch) stopHostUsersWatch();
+        stopHostUsersWatch = onValue(ref(db, 'game/users'), (snap) => {
+            if (!isAdmin || !isVoiceBroadcasting) return;
+            snap.forEach(child => {
                 const u = child.val();
-                if (u && u.id && u.id !== myId && u.isOnline) {
-                    hostConnectToParticipant(u.id);
-                }
+                if (!u || !u.id || u.id === myId) return;
+                if (u.isOnline) hostConnectToParticipant(u.id);
+                // オフラインになった人の接続は閉じておき、戻ってきた時（再読み込みなど）に張り直す
+                else if (hostConnectedParticipants.has(u.id)) hostDropParticipant(u.id);
             });
-        }
+        }, (e) => console.error('[Voice/主催者] 参加者の監視エラー:', e));
     }
 
     // --- 主催者側：配信停止 ---
     async function stopVoiceBroadcast() {
         isVoiceBroadcasting = false;
+        if (stopHostUsersWatch) { stopHostUsersWatch(); stopHostUsersWatch = null; }
         if (hostMicStream) {
             hostMicStream.getTracks().forEach(t => t.stop());
             hostMicStream = null;
         }
         Object.values(hostPeerConnections).forEach(pc => { try { pc.close(); } catch(e){} });
+        Object.values(hostPeerUnsubs).forEach(list => list.forEach(fn => { try { fn(); } catch (e) {} }));
         hostPeerConnections = {};
+        hostPeerUnsubs = {};
         hostConnectedParticipants.clear();
         document.getElementById('btn-voice-toggle').innerText = "🎤 音声配信開始";
         document.getElementById('btn-voice-toggle').style.background = "#9c27b0";
@@ -5995,17 +6021,6 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         }
     }
     window.toggleMicMute = () => setMicMuted(!isMicMuted);
-
-    // --- 主催者側：配信中に新しく参加者がオンラインになったら自動接続 ---
-    onValue(ref(db, 'game/users'), (snap) => {
-        if (!isAdmin || !isVoiceBroadcasting) return;
-        snap.forEach(child => {
-            const u = child.val();
-            if (u && u.id && u.id !== myId && u.isOnline) {
-                hostConnectToParticipant(u.id);
-            }
-        });
-    });
 
     // --- 参加者側：主催者からのoffer受信を待ち受け、応答する ---
     function listenForHostVoice() {
@@ -6044,10 +6059,20 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         onValue(ref(db, `game/webrtc/offers/${myId}`), async (snap) => {
             const offer = snap.val();
             console.log('[Voice/参加者] offer受信:', offer ? 'あり' : 'なし', ' 既存接続:', !!participantPeerConnection);
-            if (!offer || participantPeerConnection) return; // 既に接続済みなら無視
+            if (!offer || !offer.sid) return;
+            // ★修正：同じ接続番号なら処理済みなので無視。違う番号（主催者が張り直した）なら古い接続を閉じて受け直す
+            //   （以前は古い接続が残っていると新しい申し込みを無視してしまい、再読み込み後などに聞こえないことがあった）
+            if (participantPeerConnection && participantPeerConnection._voiceSid === offer.sid) return;
+            if (participantPeerConnection) {
+                try { participantPeerConnection.close(); } catch (e) {}
+                participantPeerConnection = null;
+            }
+            if (participantIceUnsub) { participantIceUnsub(); participantIceUnsub = null; }
+            const sid = offer.sid;
 
             try {
                 const pc = new RTCPeerConnection(RTC_CONFIG);
+                pc._voiceSid = sid;
                 participantPeerConnection = pc;
 
                 // ★修正：接続状態をコンソールに出す（診断用）＋切断されたら受け入れ準備をリセットする
@@ -6115,7 +6140,7 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                         voiceGainNode = voiceAudioContext.createGain();
                         // ★修正：ミュート中に再接続した場合は0のまま、そうでなければ音量スライダーの現在値を初期ゲインとして使う
                         const volSlider = document.getElementById('voice-volume-slider');
-                        voiceGainNode.gain.value = isVoiceMuted ? 0 : (volSlider ? Number(volSlider.value) / 100 : 3.0);
+                        voiceGainNode.gain.value = isVoiceMuted ? 0 : (volSlider ? Number(volSlider.value) / 100 : 0.5);
 
                         source.connect(highpass).connect(presenceEQ).connect(compressor).connect(voiceGainNode).connect(voiceAudioContext.destination);
                         // ★追加：次回ontrack発火時に切断できるよう、生成したノードを記録しておく
@@ -6140,27 +6165,29 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                 };
 
                 pc.onicecandidate = (event) => {
-                    if (event.candidate) {
-                        push(ref(db, `game/webrtc/ice/participant/${myId}`), event.candidate.toJSON());
+                    if (event.candidate && participantPeerConnection === pc) {
+                        push(ref(db, `game/webrtc/ice/participant/${myId}`), { ...event.candidate.toJSON(), sid });
                     }
                 };
 
-                await pc.setRemoteDescription(new RTCSessionDescription(offer));
+                await pc.setRemoteDescription(new RTCSessionDescription({ type: offer.type, sdp: offer.sdp }));
 
-                // 主催者からのICE candidateを受信（新規追加分だけ処理）
-                onChildAdded(ref(db, `game/webrtc/ice/host/${myId}`), (candSnap) => {
+                // 主催者からのICE candidateを受信（この接続番号のものだけ処理）
+                participantIceUnsub = onChildAdded(ref(db, `game/webrtc/ice/host/${myId}`), (candSnap) => {
                     const candidate = candSnap.val();
-                    if (candidate && pc.signalingState !== 'closed') {
-                        pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+                    if (candidate && candidate.sid === sid && pc.signalingState !== 'closed') {
+                        const { sid: _sid, ...cand } = candidate;
+                        pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
                     }
                 });
 
                 const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
-                await set(ref(db, `game/webrtc/answers/${myId}`), { sdp: answer.sdp, type: answer.type });
+                if (participantPeerConnection !== pc) return; // 準備中にさらに新しい申し込みが来た
+                await set(ref(db, `game/webrtc/answers/${myId}`), { sdp: answer.sdp, type: answer.type, sid });
             } catch (e) {
                 console.error("音声接続エラー(参加者側):", e);
-                participantPeerConnection = null;
+                if (participantPeerConnection && participantPeerConnection._voiceSid === sid) participantPeerConnection = null;
             }
         });
     }
@@ -6176,7 +6203,7 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
                 isVoiceMuted = !isVoiceMuted;
                 // ★修正：音声はGainNode経由で出力しているので、GainNodeの音量を切り替える（解除時はスライダーの値に戻す）
                 if (voiceGainNode) {
-                    voiceGainNode.gain.value = isVoiceMuted ? 0 : (voiceVolumeSlider ? Number(voiceVolumeSlider.value) / 100 : 3.0);
+                    voiceGainNode.gain.value = isVoiceMuted ? 0 : (voiceVolumeSlider ? Number(voiceVolumeSlider.value) / 100 : 0.5);
                 }
                 voiceMuteBtn.innerText = isVoiceMuted ? "🔇" : "🔊";
             };
