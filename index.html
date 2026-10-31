@@ -1892,11 +1892,14 @@ window.onYouTubeIframeAPIReady = () => {
                     // video-coverで画面が隠れている間に行うため、参加者には一切気づかれない。
                     setTimeout(() => {
                         try {
+                            // ★追加：その間に最終結果BGMが流れ始めていたら、BGMを止めないようウォームアップはしない
+                            if (isFinalResultsBgmPlaying) return;
                             if (player && player.mute && player.playVideo) {
                                 player.mute();
                                 player.playVideo();
                                 setTimeout(() => {
                                     try {
+                                        if (isFinalResultsBgmPlaying) return;
                                         player.pauseVideo();
                                         player.seekTo(data.startTimeOffset || 0, true);
                                     } catch (e) {}
@@ -4157,6 +4160,17 @@ async function renderRanking() {
             }
         }
 
+        // ★追加：早解きボーナスはこの問題で1回だけ（主催者がページを開き直してランキングが再表示されても二重に付けない）
+        if (isAdmin && !window.is1stPointAwarded) {
+            const bonusRef = ref(db, `admin/roundState/${quizInfo.round}/bonusAwarded`);
+            try {
+                if ((await get(bonusRef)).val() === true) window.is1stPointAwarded = true;
+                else await set(bonusRef, true);
+            } catch (e) {
+                console.error('早解きボーナスの記録確認に失敗:', e);
+            }
+        }
+
         // 10位（配列の最後）から1位（配列の先頭）に向かって逆順に表示させる
         for (let i = elements.length - 1; i >= 0; i--) { 
             const target = elements[i]; 
@@ -4802,11 +4816,13 @@ async function renderRanking() {
     // ★追加：最終結果発表を開いた時に流すBGM（画面は隠したまま裏で再生する）
     const FINAL_RESULTS_BGM_VIDEO_ID = "Zk1E1h656gs";
     let isFinalResultsBgmPlaying = false;
+    let finalBgmStartedAt = 0;
 
-    function startFinalResultsBgm() {
+    function startFinalResultsBgm(isRetry = false) {
         if (!player || typeof player.loadVideoById !== 'function') return;
         if (isFinalResultsBgmPlaying) return; // 既に再生中なら再読み込みしない（音切れ防止）
         isFinalResultsBgmPlaying = true;
+        if (!isRetry) finalBgmStartedAt = Date.now(); // 読み込み直しの時は時刻を延ばさない（何度も繰り返さないため）
         try {
             // ★追加：前のラウンドの答え表示等で画面が見えたままになっていることがあるため、確実に隠す
             const cover = document.getElementById('video-cover');
@@ -4829,6 +4845,18 @@ async function renderRanking() {
 
     // ★追加：BGMのループ処理（YouTube IFrame APIには単体ループ機能が無いため、終了検知で頭出しし直す）
     function onPlayerStateChange(e) {
+        // ★追加：ページを開き直した直後は、最初に読み込まれる動画がBGMを上書きすることがある。
+        // BGMを流し始めて間もないのに別の動画に変わっていたら、BGMを読み込み直す
+        if (isFinalResultsBgmPlaying && Date.now() - finalBgmStartedAt < 8000) {
+            try {
+                const current = e.target && e.target.getVideoData && e.target.getVideoData().video_id;
+                if (current && current !== FINAL_RESULTS_BGM_VIDEO_ID) {
+                    isFinalResultsBgmPlaying = false;
+                    startFinalResultsBgm(true);
+                    return;
+                }
+            } catch (err) { /* 判定できない時は何もしない */ }
+        }
         if (isFinalResultsBgmPlaying && window.YT && e.data === window.YT.PlayerState.ENDED) {
             if (player && player.seekTo && player.playVideo) {
                 player.seekTo(0, true);
@@ -5201,7 +5229,9 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
             adminRevealAnswer().catch(e => { console.error('正解発表エラー:', e); uiAlert('正解発表に失敗しました'); });
         };
         document.getElementById('btn-toggle-rank').onclick = async () => {
-            currentRankingVisible = !currentRankingVisible;
+            // ★修正：ページを開き直した直後でも1回で切り替わるよう、実際に表示されているかどうかで判断する
+            const rankPanel = document.getElementById('fastest-ranking');
+            currentRankingVisible = !(rankPanel && rankPanel.style.display === 'block');
             sendSignal('ranking_toggle', currentRankingVisible);
         };
         document.getElementById('btn-video-on').onclick = () => sendSignal('show_video', true);
