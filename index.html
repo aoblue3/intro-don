@@ -5,15 +5,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
     <title>INTRO DON! - Deluxe Edition</title>
+    <!-- ★追加：入場画面（レトロ）とテーマ用のフォント -->
+    <link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=M+PLUS+Rounded+1c:wght@500;800&family=Orbitron:wght@700;900&family=Zen+Maru+Gothic:wght@500;700&display=swap" rel="stylesheet">
     <style>
         :root { --primary-color: #007bff; --admin-color: #ff4757; --bg-color: #0f0f0f; --gold: #ffd700; --my-name-color: #00d4ff; --success-green: #28a745; }
         body { font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif; margin: 0; background: var(--bg-color); color: #fff; display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; }
         
-        /* セットアップ画面 */
-        #setup-screen { position: fixed; inset: 0; background: var(--bg-color); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box; }
-        .setup-box { background: #fff; color: #333; padding: 40px; border-radius: 20px; text-align: center; width: 340px; max-width: 100%; box-shadow: 0 10px 25px rgba(0,0,0,0.5); box-sizing: border-box; }
-        .btn-join { width: 100%; padding: 12px; background: var(--primary-color); color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; transition: 0.2s; margin-bottom: 10px; }
-        .admin-login-link { cursor: pointer; color: #666; font-size: 13px; margin-top: 15px; text-decoration: underline; display: block; }
+        /* セットアップ画面（★変更：レコード風のレトロデザインで固定） */
+        #setup-screen { position: fixed; inset: 0; background: linear-gradient(135deg, #1b1410, #2b1d14); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 20px 16px; box-sizing: border-box; overflow: hidden; font-family: 'Zen Maru Gothic', 'Hiragino Kaku Gothic ProN', sans-serif; }
+        .setup-vinyl { position: absolute; width: 520px; height: 520px; right: -160px; top: 50%; margin-top: -260px; border-radius: 50%; background: repeating-radial-gradient(circle, #111 0 2px, #1c1c1c 2px 4px); box-shadow: 0 0 60px rgba(0,0,0,.8); animation: setup-spin 4s linear infinite; pointer-events: none; }
+        .setup-vinyl::after { content: 'INTRO\A DON!'; white-space: pre; position: absolute; inset: 37%; border-radius: 50%; background: #e2492f; display: flex; align-items: center; justify-content: center; font-family: 'Dela Gothic One', sans-serif; font-size: 20px; color: #fff3e0; text-align: center; line-height: 1.1; }
+        @keyframes setup-spin { to { transform: rotate(360deg); } }
+        .setup-box { position: relative; z-index: 1; background: #f6ecd9; color: #3b2a1e; padding: 30px 26px; border-radius: 6px; text-align: left; width: 360px; max-width: 100%; box-shadow: 8px 8px 0 #e2492f; box-sizing: border-box; max-height: calc(100dvh - 40px); overflow-y: auto; }
+        .setup-logo { margin: 0; font-family: 'Dela Gothic One', sans-serif; font-weight: normal; font-size: 38px; color: #e2492f; line-height: 1; }
+        .setup-sub { font-size: 12px; letter-spacing: 3px; color: #7a5a40; margin: 6px 0 14px; border-bottom: 2px dashed #c9b28f; padding-bottom: 12px; }
+        .setup-status { font-size: 12px; color: #7a5a40; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+        .setup-status-dot { width: 8px; height: 8px; border-radius: 50%; background: #e2492f; display: inline-block; }
+        .setup-status.is-closed .setup-status-dot { background: #999; }
+        .setup-label { font-size: 12px; font-weight: bold; color: #7a5a40; display: block; }
+        #user-name { width: 100%; margin-top: 4px; padding: 13px; background: #fff; border: 2px solid #3b2a1e; border-radius: 4px; color: #3b2a1e; outline: none; font-size: 16px; font-family: inherit; box-sizing: border-box; }
+        #user-name:focus { border-color: #e2492f; }
+        .setup-remember { font-size: 12px; color: #7a5a40; margin: 6px 0 0; display: flex; align-items: center; gap: 6px; }
+        .setup-remember input { margin: 0; accent-color: #e2492f; }
+        #user-name-count { margin-left: auto; }
+        .btn-join { width: 100%; margin-top: 14px; padding: 14px; background: #3b2a1e; color: #fff; border: none; border-radius: 4px; font-family: 'Dela Gothic One', sans-serif; font-size: 18px; cursor: pointer; transition: 0.2s; margin-bottom: 4px; }
+        .btn-join:hover { background: #e2492f; }
+        .setup-link-btn { background: none; border: none; color: #7a5a40; cursor: pointer; font: inherit; font-size: 13px; text-decoration: underline; padding: 6px 0; display: block; }
+        .admin-login-link { cursor: pointer; color: #7a5a40; font-size: 13px; margin-top: 10px; display: inline-block; }
+        #admin-login-form { display: none; gap: 6px; margin-top: 8px; }
+        #admin-login-form.open { display: flex; }
+        #admin-pass-input { flex: 1; min-width: 0; padding: 8px; border: 2px solid #3b2a1e; border-radius: 4px; font-size: 16px; font-family: inherit; color: #3b2a1e; background: #fff; }
+        #btn-admin-login-submit { background: #3b2a1e; color: #fff; border: none; border-radius: 4px; padding: 0 14px; cursor: pointer; font-family: inherit; font-weight: bold; }
 
         /* 管理パネル */
         #admin-panel { background: #000; padding: 12px; display: none; border-bottom: 2px solid var(--admin-color); z-index: 1000; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
@@ -754,11 +776,12 @@
             #admin-panel { flex-wrap: wrap; }
 
             /* ★追加：入場画面（名前入力・参加ボタン）をスマホでも見やすく・押しやすく */
-            .setup-box { width: 92vw; padding: 30px 24px; border-radius: 16px; }
-            .setup-box h2 { font-size: 1.3rem; }
+            .setup-box { width: 92vw; padding: 26px 22px; }
+            .setup-logo { font-size: 32px; }
+            .setup-vinyl { width: 360px; height: 360px; right: -180px; margin-top: -180px; opacity: .5; }
             #user-name { font-size: 16px !important; padding: 14px !important; } /* 16px以上でiOSの自動ズームを防止 */
-            .btn-join { font-size: 16px; padding: 15px !important; border-radius: 10px; }
-            .admin-login-link { font-size: 15px; margin-top: 20px; }
+            .btn-join { font-size: 16px; padding: 15px !important; }
+            .admin-login-link { font-size: 15px; }
             #admin-close-lock { font-size: 12px !important; padding: 8px !important; }
 
             /* ★追加：クイズの問題文が崩れないよう縮小 */
@@ -869,18 +892,140 @@
             opacity: 0.6;
             cursor: not-allowed;
 }
+        /* =====================================================================
+           ★追加：画面テーマ（参加者・主催者が各自で選ぶ。既定は従来のデザイン）
+           ・READY?／カウントダウン／ROUND表示（#video-cover 内）とチャンスタイム演出はテーマに関係なく従来のまま
+           ・各テーマは --t-* の値だけを決め、下の共通ルールが部品に当てはめる
+           ===================================================================== */
+        body.theme-retro {
+            --t-font: 'Zen Maru Gothic', 'Hiragino Kaku Gothic ProN', sans-serif; --t-head: 'Dela Gothic One', sans-serif;
+            --t-page: #1b1410; --t-radius: 4px; --t-accent: #e2492f; --t-accent-text: #fff; --t-send-bg: #e2492f;
+            --t-side-bg: #f6ecd9; --t-side-text: #3b2a1e; --t-side-sub: #7a5a40; --t-side-border: 3px solid #3b2a1e;
+            --t-card-bg: #fffaf0; --t-card-text: #3b2a1e; --t-card-border: 2px solid #3b2a1e; --t-card-shadow: 3px 3px 0 #c9b28f;
+            --t-me-bg: #ffe9cc; --t-me-shadow: 3px 3px 0 #e2492f; --t-admin-bg: #3b2a1e; --t-admin-text: #f6ecd9;
+            --t-bar-bg: linear-gradient(180deg, #3a281b, #2b1d14); --t-bar-border: 3px solid #e2492f; --t-bar-text: #f6ecd9;
+            --t-input-bg: #f6ecd9; --t-input-text: #3b2a1e; --t-input-border: 2px solid #3b2a1e; --t-placeholder: #9a7f63;
+            --t-btn-bg: #f6ecd9; --t-btn-text: #3b2a1e; --t-btn-border: none; --t-btn-shadow: 0 3px 0 #120d0a;
+            --t-exit-bg: #3b2a1e; --t-exit-text: #f6ecd9;
+            --t-choice-bg: #f6ecd9; --t-choice-text: #3b2a1e; --t-choice-border: 3px solid #3b2a1e; --t-choice-shadow: 4px 4px 0 #e2492f;
+            --t-q-bg: #f6ecd9; --t-q-text: #3b2a1e; --t-q-border: #e2492f; --t-q-shadow: 6px 6px 0 #e2492f; --t-q-text-shadow: none;
+            --t-react-bg: radial-gradient(circle, #2b1d14 0 30%, #0d0a08 31%); --t-react-ring: 0 0 0 2px rgba(246,236,217,.15);
+            --t-panel-bg: #2b1d14; --t-panel-border: 3px solid #f6ecd9; --t-panel-shadow: 10px 10px 0 #e2492f; --t-panel-head: #f6ecd9;
+            --t-bar2-bg: linear-gradient(180deg, #3a281b, #2b1d14);
+        }
+        body.theme-neon {
+            --t-font: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif; --t-head: 'Orbitron', 'Helvetica Neue', sans-serif;
+            --t-page: #07010f; --t-radius: 6px; --t-accent: #ff2fd0; --t-accent-text: #07010f; --t-send-bg: #ff2fd0;
+            --t-side-bg: #0d0420; --t-side-text: #e8e8ff; --t-side-sub: #00f0ff; --t-side-border: 2px solid #ff2fd0;
+            --t-card-bg: rgba(255,255,255,.04); --t-card-text: #fff; --t-card-border: 1px solid rgba(0,240,255,.5); --t-card-shadow: 0 0 8px rgba(0,240,255,.25);
+            --t-me-bg: rgba(255,47,208,.15); --t-me-shadow: 0 0 12px #ff2fd0; --t-admin-bg: rgba(0,240,255,.12); --t-admin-text: #00f0ff;
+            --t-bar-bg: #07010f; --t-bar-border: 2px solid #00f0ff; --t-bar-text: #9ff;
+            --t-input-bg: rgba(0,0,0,.5); --t-input-text: #fff; --t-input-border: 2px solid #00f0ff; --t-placeholder: #6aa;
+            --t-btn-bg: transparent; --t-btn-text: #00f0ff; --t-btn-border: 1px solid #00f0ff; --t-btn-shadow: 0 0 8px rgba(0,240,255,.4);
+            --t-exit-bg: transparent; --t-exit-text: #ff2fd0;
+            --t-choice-bg: rgba(7,1,15,.88); --t-choice-text: #fff; --t-choice-border: 2px solid #00f0ff; --t-choice-shadow: 0 0 14px rgba(0,240,255,.5);
+            --t-q-bg: rgba(7,1,15,.9); --t-q-text: #fff; --t-q-border: #ff2fd0; --t-q-shadow: 0 0 16px #ff2fd0; --t-q-text-shadow: 0 0 8px #ff2fd0;
+            --t-react-bg: rgba(13,4,32,.85); --t-react-ring: 0 0 6px rgba(255,47,208,.6);
+            --t-panel-bg: #0d0420; --t-panel-border: 2px solid #00f0ff; --t-panel-shadow: 0 0 30px rgba(255,47,208,.5); --t-panel-head: #ff2fd0;
+            --t-bar2-bg: #07010f;
+        }
+        body.theme-stage {
+            --t-font: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif; --t-head: 'Dela Gothic One', sans-serif;
+            --t-page: #050505; --t-radius: 10px; --t-accent: #ffc107; --t-accent-text: #1a1a1a; --t-send-bg: linear-gradient(180deg, #ffe680, #ffb300);
+            --t-side-bg: #0b0b0b; --t-side-text: #eee; --t-side-sub: #ffd700; --t-side-border: 1px solid rgba(255,215,0,.4);
+            --t-card-bg: #161616; --t-card-text: #eee; --t-card-border: 1px solid #333; --t-card-shadow: none;
+            --t-me-bg: rgba(255,215,0,.12); --t-me-shadow: 0 0 12px rgba(255,215,0,.35); --t-admin-bg: #2a1f00; --t-admin-text: #ffd700;
+            --t-bar-bg: #0b0b0b; --t-bar-border: 1px solid rgba(255,215,0,.4); --t-bar-text: #ddd;
+            --t-input-bg: #111; --t-input-text: #fff; --t-input-border: 1px solid #555; --t-placeholder: #777;
+            --t-btn-bg: #222; --t-btn-text: #ffd700; --t-btn-border: 1px solid #444; --t-btn-shadow: none;
+            --t-exit-bg: #222; --t-exit-text: #ff6b6b;
+            --t-choice-bg: rgba(20,20,20,.9); --t-choice-text: #ffd700; --t-choice-border: 1px solid rgba(255,215,0,.6); --t-choice-shadow: 0 0 20px rgba(255,215,0,.15);
+            --t-q-bg: rgba(20,20,20,.92); --t-q-text: #ffd700; --t-q-border: #ffd700; --t-q-shadow: 0 0 30px rgba(255,215,0,.25); --t-q-text-shadow: none;
+            --t-react-bg: rgba(0,0,0,.6); --t-react-ring: 0 0 0 1px rgba(255,215,0,.3);
+            --t-panel-bg: rgba(15,15,15,.96); --t-panel-border: 1px solid rgba(255,215,0,.5); --t-panel-shadow: 0 0 60px rgba(255,215,0,.2); --t-panel-head: #ffd700;
+            --t-bar2-bg: #0b0b0b;
+        }
+        body.theme-pop {
+            --t-font: 'M PLUS Rounded 1c', 'Hiragino Maru Gothic ProN', sans-serif; --t-head: 'M PLUS Rounded 1c', sans-serif;
+            --t-page: #ffcc00; --t-radius: 14px; --t-accent: #ff3b5c; --t-accent-text: #fff; --t-send-bg: #ff3b5c;
+            --t-side-bg: #fff; --t-side-text: #222; --t-side-sub: #ff3b5c; --t-side-border: 4px solid #222;
+            --t-card-bg: #fff; --t-card-text: #222; --t-card-border: 3px solid #222; --t-card-shadow: 0 4px 0 #222;
+            --t-me-bg: #fff1a8; --t-me-shadow: 0 4px 0 #ff3b5c; --t-admin-bg: #222; --t-admin-text: #ffcc00;
+            --t-bar-bg: #ffcc00; --t-bar-border: 4px solid #222; --t-bar-text: #222;
+            --t-input-bg: #fff; --t-input-text: #222; --t-input-border: 3px solid #222; --t-placeholder: #999;
+            --t-btn-bg: #fff; --t-btn-text: #222; --t-btn-border: 3px solid #222; --t-btn-shadow: 0 4px 0 #222;
+            --t-exit-bg: #222; --t-exit-text: #fff;
+            --t-choice-bg: #fff; --t-choice-text: #222; --t-choice-border: 4px solid #222; --t-choice-shadow: 0 6px 0 #222;
+            --t-q-bg: #fff; --t-q-text: #222; --t-q-border: #222; --t-q-shadow: 6px 6px 0 #ff3b5c; --t-q-text-shadow: none;
+            --t-react-bg: #fff; --t-react-ring: 0 0 0 3px #222;
+            --t-panel-bg: #222; --t-panel-border: 4px solid #ffcc00; --t-panel-shadow: 0 10px 0 #000; --t-panel-head: #ffcc00;
+            --t-bar2-bg: #ffcc00;
+        }
+        body.themed { background: var(--t-page); font-family: var(--t-font); }
+        body.themed .danmaku, body.themed .center-notify { font-family: var(--t-font); }
+        /* 問題文・選択肢 */
+        body.themed #quiz-question-display { background: var(--t-q-bg) !important; color: var(--t-q-text) !important; border-color: var(--t-q-border) !important; box-shadow: var(--t-q-shadow) !important; text-shadow: var(--t-q-text-shadow) !important; font-family: var(--t-font); }
+        body.themed .choice-btn { background: var(--t-choice-bg) !important; color: var(--t-choice-text) !important; border: var(--t-choice-border) !important; border-radius: var(--t-radius) !important; box-shadow: var(--t-choice-shadow); font-family: var(--t-font); }
+        body.themed .reaction-btn { background: var(--t-react-bg) !important; box-shadow: var(--t-react-ring); }
+        /* 下の入力バー */
+        body.themed #input-area { background: var(--t-bar-bg); border-top: var(--t-bar-border); }
+        body.themed #answer-input { background: var(--t-input-bg); color: var(--t-input-text); border: var(--t-input-border); border-radius: var(--t-radius); font-family: var(--t-font); font-weight: bold; }
+        body.themed #answer-input::placeholder { color: var(--t-placeholder); }
+        body.themed #input-area button { font-family: var(--t-font) !important; font-weight: bold !important; border-radius: var(--t-radius) !important; background: var(--t-btn-bg) !important; color: var(--t-btn-text) !important; border: var(--t-btn-border) !important; box-shadow: var(--t-btn-shadow); }
+        body.themed #input-area #btn-send-answer { background: var(--t-send-bg) !important; color: var(--t-accent-text) !important; }
+        body.themed #input-area #exit-game-btn { background: var(--t-exit-bg) !important; color: var(--t-exit-text) !important; }
+        body.themed #input-area .volume-controls, body.themed #input-area #volume-val { color: var(--t-bar-text); }
+        body.themed #volume-slider { accent-color: var(--t-accent); }
+        /* 右のランキング */
+        body.themed #sidebar { background: var(--t-side-bg); color: var(--t-side-text); border-left: var(--t-side-border); }
+        body.themed #sidebar > div:first-child { color: var(--t-side-sub) !important; font-family: var(--t-head); letter-spacing: 2px; }
+        body.themed .user-card { background: var(--t-card-bg); color: var(--t-card-text); border: var(--t-card-border); border-radius: var(--t-radius); box-shadow: var(--t-card-shadow); }
+        body.themed .user-card.is-me { background: var(--t-me-bg); border-color: var(--t-accent); box-shadow: var(--t-me-shadow); }
+        body.themed .user-card.is-admin { background: var(--t-admin-bg); color: var(--t-admin-text); }
+        /* 早解きランキング・最終結果・各種ウィンドウ（文字色は従来のまま読めるよう、背景は暗いまま縁取りだけ変える） */
+        body.themed #fastest-ranking, body.themed #final-results { background: var(--t-panel-bg) !important; border: var(--t-panel-border) !important; box-shadow: var(--t-panel-shadow) !important; border-radius: var(--t-radius) !important; font-family: var(--t-font); }
+        body.themed .q-modal-box,
+        body.themed #rules-modal > div, body.themed #my-history-modal > div, body.themed #chatlog-modal > div, body.themed #history-custom-modal > div {
+            background: var(--t-panel-bg) !important; border: var(--t-panel-border) !important; box-shadow: var(--t-panel-shadow) !important; border-radius: var(--t-radius) !important; font-family: var(--t-font) !important;
+        }
+        body.themed .q-modal-box h3 { color: var(--t-panel-head); font-family: var(--t-head); }
+        /* 主催者パネル */
+        body.themed #admin-panel { background: var(--t-bar2-bg); }
+        body.themed .admin-btn { border-radius: var(--t-radius); font-family: var(--t-font); }
+
+        /* ★追加：テーマ選択ボタンとメニュー */
+        #theme-picker { position: fixed; bottom: 80px; right: 16px; z-index: 100000; display: none; background: #222; border: 1px solid #555; border-radius: 10px; padding: 8px; box-shadow: 0 8px 30px rgba(0,0,0,.6); min-width: 190px; }
+        #theme-picker.open { display: block; }
+        #theme-picker .theme-picker-title { font-size: 11px; color: #aaa; padding: 2px 6px 6px; }
+        #theme-picker button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: none; border: none; color: #fff; padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+        #theme-picker button:hover { background: #333; }
+        #theme-picker button.selected { background: #444; font-weight: bold; }
+        #theme-picker .theme-swatch { width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0; border: 1px solid rgba(255,255,255,.3); }
     </style>
 </head>
 <body>
 
 <div id="setup-screen">
+    <div class="setup-vinyl"></div>
     <div class="setup-box">
-        <h2 style="margin:0 0 20px 0;">INTRO DON! Deluxe Edition</h2>
-        <input type="text" id="user-name" placeholder="名前を入力" style="width:100%; padding:12px; margin-bottom:15px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
-        <button id="btn-join-player" class="btn-join" style="display: none;">参加する</button>
-        <div id="closed-message" style="color: red; font-size: 14px; font-weight: bold; margin: 10px 0;"></div>
-        <button id="admin-close-lock" style="display: block; width: 100%; margin-bottom: 10px; opacity: 0.5; font-size: 10px; border: none; background: none; cursor: pointer;">[管理設定: 部屋の開放/閉鎖]</button>
+        <h2 class="setup-logo">INTRO<br>DON!</h2>
+        <div class="setup-sub">DELUXE EDITION ─ SIDE A</div>
+        <div id="setup-status" class="setup-status"><span class="setup-status-dot"></span><span id="setup-status-text">ルームの状態を確認中…</span></div>
+        <label class="setup-label" for="user-name">ニックネーム</label>
+        <input type="text" id="user-name" placeholder="名前を入力" maxlength="12" autocomplete="nickname">
+        <div class="setup-remember">
+            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="remember-name" checked> この名前を覚えておく</label>
+            <span id="user-name-count">0/12</span>
+        </div>
+        <button id="btn-join-player" class="btn-join" style="display: none;">▶ 参加する</button>
+        <div id="closed-message" style="color: #e2492f; font-size: 14px; font-weight: bold; margin: 10px 0;"></div>
+        <button type="button" class="setup-link-btn" onclick="showRulesModal()">📖 ルールを読む</button>
         <span id="btn-admin-login" class="admin-login-link">🔧 主催者ログイン</span>
+        <div id="admin-login-form">
+            <input type="password" id="admin-pass-input" placeholder="パスワード" autocomplete="current-password">
+            <button type="button" id="btn-admin-login-submit">入室</button>
+        </div>
+        <button id="admin-close-lock" style="display: block; width: 100%; margin-top: 10px; opacity: 0.5; font-size: 10px; border: none; background: none; cursor: pointer; color: #7a5a40;">[管理設定: 部屋の開放/閉鎖]</button>
     </div>
 </div>
 
@@ -1148,6 +1293,7 @@
             <button id="pass-btn" onclick="sendPassSignal()" style="background:#888; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">パス</button>
             <button id="my-history-btn" onclick="showMyHistory()" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">履歴</button>
             <button id="rules-btn" onclick="showRulesModal()" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">ルール</button>
+            <button id="theme-btn" title="画面のデザインを変える" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 12px; cursor:pointer; margin: 0 5px;">🎨</button>
             <button id="exit-game-btn" onclick="exitGame()" style="background:#dc3545; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">退出</button>
             <div class="volume-controls">
                 <span id="mute-btn" style="cursor:pointer;">🔈</span>
@@ -1160,6 +1306,14 @@
             <input type="range" id="voice-volume-slider" min="0" max="500" value="300" style="display:none; width:70px; vertical-align:middle;" title="主催者音声の音量">
             <span id="voice-volume-val" style="font-size:11px; min-width:32px; display:none;">300%</span>
             <audio id="host-voice-audio" autoplay playsinline></audio>
+        </div>
+        <div id="theme-picker">
+            <div class="theme-picker-title">画面のデザイン（自分の画面だけ変わります）</div>
+            <button data-theme=""><span class="theme-swatch" style="background:#007bff"></span>デフォルト</button>
+            <button data-theme="retro"><span class="theme-swatch" style="background:#e2492f"></span>レコード・レトロ</button>
+            <button data-theme="neon"><span class="theme-swatch" style="background:#ff2fd0"></span>ネオン・アーケード</button>
+            <button data-theme="stage"><span class="theme-swatch" style="background:#ffd700"></span>ステージ・スポットライト</button>
+            <button data-theme="pop"><span class="theme-swatch" style="background:#ffcc00"></span>ポップ・クイズ番組</button>
         </div>
     </div>
     
@@ -4700,6 +4854,44 @@ async function renderRanking() {
             console.error("初期匿名ログインエラー:", e);
         }
 
+        // ★追加：画面テーマ（各自のブラウザに保存。既定は従来のデザイン）
+        const THEME_STORAGE_KEY = 'introdon_theme';
+        const THEMES = ['retro', 'neon', 'stage', 'pop'];
+        const applyTheme = (name) => {
+            const theme = THEMES.includes(name) ? name : '';
+            THEMES.forEach(t => document.body.classList.remove(`theme-${t}`));
+            document.body.classList.toggle('themed', !!theme);
+            if (theme) document.body.classList.add(`theme-${theme}`);
+            document.querySelectorAll('#theme-picker button[data-theme]').forEach(b => b.classList.toggle('selected', b.dataset.theme === theme));
+            return theme;
+        };
+        try { applyTheme(localStorage.getItem(THEME_STORAGE_KEY) || ''); } catch (e) { applyTheme(''); }
+        const themePicker = document.getElementById('theme-picker');
+        document.getElementById('theme-btn').onclick = (e) => { e.stopPropagation(); themePicker.classList.toggle('open'); };
+        themePicker.querySelectorAll('button[data-theme]').forEach(b => b.onclick = () => {
+            const theme = applyTheme(b.dataset.theme);
+            try { localStorage.setItem(THEME_STORAGE_KEY, theme); } catch (err) { /* 保存できなくても今の画面には反映 */ }
+            themePicker.classList.remove('open');
+        });
+        document.addEventListener('click', (e) => { if (!themePicker.contains(e.target)) themePicker.classList.remove('open'); });
+
+        // ★追加：入場画面の「ルームの状態」表示（開放/閉鎖・オンライン人数）
+        const setupStatus = { isClosed: null, online: null };
+        const renderSetupStatus = () => {
+            const box = document.getElementById('setup-status');
+            const text = document.getElementById('setup-status-text');
+            if (!box || !text || setupStatus.isClosed === null) return;
+            box.classList.toggle('is-closed', !!setupStatus.isClosed);
+            if (setupStatus.isClosed) text.textContent = 'ルーム閉鎖中';
+            else text.textContent = setupStatus.online === null ? 'ルーム開放中' : `ルーム開放中・${setupStatus.online}人がオンライン`;
+        };
+        // 入場画面が出ている間だけ人数を数える（参加後は不要なので止める）
+        const stopSetupOnlineWatch = onValue(ref(db, 'game/users'), (snap) => {
+            const users = snap.val() || {};
+            setupStatus.online = Object.values(users).filter(u => u && u.isOnline === true).length;
+            renderSetupStatus();
+        }, () => {});
+
         // 全ブラウザ共通：部屋の閉鎖状態を常に監視する
         onValue(ref(db, 'game/settings'), (snap) => {
             const settings = snap.val() || {};
@@ -4715,21 +4907,70 @@ async function renderRanking() {
                 if (joinBtn) joinBtn.style.setProperty('display', 'block', 'important');
                 if (closeMsg) closeMsg.innerText = "";
             }
+            setupStatus.isClosed = !!settings.isClosed;
+            renderSetupStatus();
         });
-        document.getElementById('btn-join-player').onclick = () => prepareJoin('player');
-        document.getElementById('btn-admin-login').onclick = async () => {
-            const pass = prompt("パスワードを入力してください");
+
+        // ★追加：名前を覚えておく・文字数表示・Enterで参加
+        const NAME_STORAGE_KEY = 'introdon_name';
+        const REMEMBER_STORAGE_KEY = 'introdon_remember_name';
+        const nameInput = document.getElementById('user-name');
+        const rememberBox = document.getElementById('remember-name');
+        const nameCount = document.getElementById('user-name-count');
+        const updateNameCount = () => { if (nameCount) nameCount.textContent = `${[...nameInput.value].length}/${nameInput.maxLength}`; };
+        try {
+            const remember = localStorage.getItem(REMEMBER_STORAGE_KEY) !== '0';
+            rememberBox.checked = remember;
+            const saved = localStorage.getItem(NAME_STORAGE_KEY);
+            if (remember && saved && !nameInput.value) nameInput.value = saved.slice(0, nameInput.maxLength);
+        } catch (e) { /* 保存領域が使えない環境では覚えない */ }
+        updateNameCount();
+        nameInput.addEventListener('input', updateNameCount);
+        const saveRememberedName = () => {
+            try {
+                localStorage.setItem(REMEMBER_STORAGE_KEY, rememberBox.checked ? '1' : '0');
+                if (rememberBox.checked && nameInput.value.trim()) localStorage.setItem(NAME_STORAGE_KEY, nameInput.value.trim());
+                else if (!rememberBox.checked) localStorage.removeItem(NAME_STORAGE_KEY);
+            } catch (e) { /* 保存できなくても参加は続ける */ }
+        };
+        const joinAsPlayer = () => {
+            if (stopSetupOnlineWatch) stopSetupOnlineWatch();
+            saveRememberedName();
+            prepareJoin('player');
+        };
+        nameInput.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' || e.isComposing) return;
+            const joinBtn = document.getElementById('btn-join-player');
+            if (joinBtn && joinBtn.style.display !== 'none') joinAsPlayer();
+        });
+
+        document.getElementById('btn-join-player').onclick = joinAsPlayer;
+        // ★変更：パスワードはポップアップではなく、入場画面の中の入力欄で受け取る
+        const adminLoginForm = document.getElementById('admin-login-form');
+        const adminPassInput = document.getElementById('admin-pass-input');
+        document.getElementById('btn-admin-login').onclick = () => {
+            adminLoginForm.classList.toggle('open');
+            if (adminLoginForm.classList.contains('open')) adminPassInput.focus();
+        };
+        const submitAdminLogin = async () => {
+            const pass = adminPassInput.value;
             if (!pass) return;
+            if (!nameInput.value.trim()) return alert("名前を入力してください");
 
             try {
                 // ★修正：DB上の平文パスワード比較をやめ、Firebase Authenticationでの本物のログインに一本化
                 await signInWithEmailAndPassword(auth, ADMIN_AUTH_EMAIL, pass);
+                adminPassInput.value = "";
+                if (stopSetupOnlineWatch) stopSetupOnlineWatch();
+                saveRememberedName();
                 prepareJoin('admin');
             } catch (error) {
                 console.error("管理者ログインエラー:", error);
                 alert("パスワードが違います");
             }
         };
+        document.getElementById('btn-admin-login-submit').onclick = submitAdminLogin;
+        adminPassInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) submitAdminLogin(); });
 document.getElementById('btn-send-answer').onclick = sendAnswer;
         document.getElementById('btn-pause').onclick = () => sendSignal('pause_video', true);
         document.getElementById('answer-input').onkeypress = (e) => { if(e.key === 'Enter') sendAnswer(); };
@@ -4867,7 +5108,9 @@ document.getElementById('btn-send-answer').onclick = sendAnswer;
         };
         // --- 修正箇所ここから ---
         document.getElementById('admin-close-lock').onclick = async () => {
-            const pass = prompt("主催者パスワードを入力してください");
+            // ★変更：入場画面のパスワード欄に入力済みならそれを使う（未入力なら従来どおり聞く）
+            const typedPass = document.getElementById('admin-pass-input').value;
+            const pass = typedPass || prompt("主催者パスワードを入力してください");
             if (!pass) return;
             try {
                 // ★修正：DB上の平文パスワード比較をやめ、Firebase Authenticationでの本物のログインに一本化
