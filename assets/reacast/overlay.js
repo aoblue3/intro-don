@@ -1,0 +1,3967 @@
+'use strict';
+/**
+ * メインモニター全面オーバーレイの表示ロジック(Tauri版)。
+ *
+ * 各リアクションごとに専用のアニメーションを付けてある。役割を分けて実装している:
+ *   - .reaction-item(外側のdiv): 画面内での浮遊・ドリフト・フェードをJS側で
+ *     transitionを使って動かす(以前からある仕組み)。
+ *   - .reaction-glyph(内側のspan): そのリアクションの絵文字/文字そのもの。
+ *     「その絵文字らしい」個別のクセ(拍手ならパンパンと弾む、炎ならチラつく、
+ *     泣き顔なら震える、等)をCSSの@keyframesアニメーション(overlay.html側に
+ *     定義)で表現する。外側と内側で別々の要素のtransformを使うことで、
+ *     お互いのアニメーションがぶつからずに同時に効かせられる。
+ *   - パーティクル(.particle): 拍手の効果線、ハートの粒、炎の火の粉、涙、
+ *     紙吹雪、キラキラ等、リアクションによっては絵文字本体の周りに追加の
+ *     小さな装飾を数個まとめて発生させる。
+ */
+const stage = document.getElementById('stage');
+/**
+ * リアクションの中で使う乱数。表示する時だけ、ReaCastがリアクションごとに送る種から
+ * 作った乱数に差し替える(playReaction)ので、自分の画面とOBSで同じ位置・同じ動きになる。
+ * 後から(setTimeoutなどで)使う分は、いつものMath.random
+ */
+let rand = Math.random;
+
+/**
+ * リアクションを動かす場所の大きさ。OBSのブラウザソースは自分の画面(オーバーレイ)と大きさが
+ * 違うので、そのままだと位置や当たり判定(⭐で無敵になる・倒すなど)が画面ごとに違ってしまう。
+ * OBSでは、自分の画面と同じ大きさの場所で動かして、それを縮めて(拡げて)映す
+ * (自分の画面の大きさはReaCastから届く。届くまでは、OBSの画面の大きさのまま)
+ */
+const view = { w: 0, h: 0, k: 1, ox: 0, oy: 0 };
+function stageW() {
+  return view.w || window.innerWidth;
+}
+function stageH() {
+  return view.h || window.innerHeight;
+}
+function layoutStage() {
+  if (!view.w || !view.h) {
+    view.k = 1;
+    view.ox = 0;
+    view.oy = 0;
+    stage.style.cssText = '';
+    return;
+  }
+  const k = Math.min(window.innerWidth / view.w, window.innerHeight / view.h) || 1;
+  view.k = k;
+  view.ox = (window.innerWidth - view.w * k) / 2;
+  view.oy = (window.innerHeight - view.h * k) / 2;
+  stage.style.inset = 'auto';
+  stage.style.left = '0';
+  stage.style.top = '0';
+  stage.style.width = `${view.w}px`;
+  stage.style.height = `${view.h}px`;
+  stage.style.overflow = 'hidden';
+  stage.style.transformOrigin = '0 0';
+  stage.style.transform = `translate(${view.ox}px, ${view.oy}px) scale(${k})`;
+}
+function applyStageSize(w, h) {
+  if (!(w > 0 && h > 0)) return;
+  if (view.w === w && view.h === h) return;
+  view.w = w;
+  view.h = h;
+  layoutStage();
+}
+window.addEventListener('resize', layoutStage);
+/** 要素の位置・大きさ(動かす場所の中での値。OBSで縮めて映していても同じ値になる) */
+function rectOf(el) {
+  const r = el.getBoundingClientRect();
+  if (view.k === 1 && !view.ox && !view.oy) return r;
+  const left = (r.left - view.ox) / view.k;
+  const top = (r.top - view.oy) / view.k;
+  const width = r.width / view.k;
+  const height = r.height / view.k;
+  return { left, top, width, height, right: left + width, bottom: top + height, x: left, y: top };
+}
+
+/**
+ * 決まった刻み(1/60秒)で動かす動き(⭐の流れ星・無敵の子)。OBS(30fpsなど)と自分の画面
+ * (60fps以上)で同じ所で当たる/外れるように、どちらも同じ時計(Date.now)の同じ刻みで、
+ * 登録された順に1歩ずつ進める。fn(t, dt)がfalseを返したら止まる
+ */
+const SIM_STEP_MS = 1000 / 60;
+const simTasks = [];
+let simTick = 0;
+function simAdd(startAt, fn) {
+  simTasks.push({ from: Math.ceil(startAt / SIM_STEP_MS), fn });
+  if (simTasks.length === 1) {
+    simTick = Math.ceil(startAt / SIM_STEP_MS) - 1;
+    requestAnimationFrame(simFrame);
+  }
+}
+function simFrame() {
+  const until = Math.floor(Date.now() / SIM_STEP_MS);
+  // 長く止まっていた(画面が隠れていたなど)時も、同じ歩みになるよう全部進める(多すぎる分は飛ばす)
+  if (until - simTick > 60 * 60) simTick = until - 60 * 60;
+  while (simTick < until && simTasks.length) {
+    simTick += 1;
+    const t = simTick * SIM_STEP_MS;
+    for (let i = 0; i < simTasks.length; i++) {
+      const task = simTasks[i];
+      if (task.done || task.from > simTick) continue;
+      // 1つが失敗しても、ほかの動きが止まったままにならないように(その動きだけ終わらせる)
+      try {
+        if (task.fn(t, SIM_STEP_MS / 1000) === false) task.done = true;
+      } catch (e) {
+        task.done = true;
+        console.error(e);
+      }
+    }
+    for (let i = simTasks.length - 1; i >= 0; i--) if (simTasks[i].done) simTasks.splice(i, 1);
+  }
+  if (simTasks.length) requestAnimationFrame(simFrame);
+}
+
+const emojiById = window.EmojiSet.EMOJI_BY_ID;
+
+/**
+ * 絵文字(文字)を入れる。影(drop-shadow)は中の要素(.gin)に付ける。動いている絵文字そのものに
+ * 影を付けると、動いている間ずっと毎コマ影を描き直すので、たくさん出るとOBSのCPU・GPUが
+ * とても重くなっていた。中の要素に付ければ最初に1回描くだけで、見た目は同じ(overlay.html)
+ */
+function setGlyph(glyph, text) {
+  const inner = document.createElement('span');
+  inner.className = 'gin';
+  inner.textContent = text;
+  glyph.replaceChildren(inner);
+  glyph.classList.add('has-gin');
+}
+
+// Electron版 broadcaster-app/config.js の DEFAULT_OVERLAY_SETTINGS と同じ値。
+// baseSizePx/comboSizeStepPxは「絵文字の大きさ」設定(既定100%)からの
+// 倍率で毎回計算し直すため、ここでは基準値(BASE_*)として保持する。
+const BASE_SIZE_PX = 64;
+const BASE_COMBO_STEP_PX = 12;
+const settings = {
+  maxConcurrent: 40,
+  baseSizePx: BASE_SIZE_PX,
+  comboSizeStepPx: BASE_COMBO_STEP_PX,
+  comboMaxSteps: 6,
+  animationDurationMs: 2600,
+  // スタンプの透明度(既定1=不透明)。表示中(最大不透明)の状態にだけ効く
+  // (フェードイン/アウトの0はそのまま)。
+  glyphOpacity: 1,
+  // 連打すると絵文字が段階的に大きくなる仕様のON/OFF(既定ON=従来通り)。
+  comboGrowthEnabled: true,
+  // 上のcomboGrowthEnabledとは別軸で、「全体はONのまま、このリアクションだけは
+  // 大きくしない」を個別指定できるリアクションIDのSet(既定は空=どのリアクション
+  // も除外しない=従来通り全て大きくなる)。控えめなIDの重複チェックのため
+  // Array/Setのどちらでも使えるよう、後述のapplyNoComboGrowthIdsがSetへ変換する。
+  noComboGrowthIds: new Set(),
+};
+
+// 設定パネルの「絵文字の大きさ」で選んだ倍率(既定1=100%)を反映する。
+// Tauri本体のオーバーレイと、OBSの「ブラウザ」ソース(obs_bridge.rs)の両方に
+// 同じ値が効くようにしたいので、値そのものはRust側(ConfigStore)で一元管理し、
+// こちらは渡された値を使って表示サイズを計算し直すだけにする。
+function applyGlyphScale(scale) {
+  const s = Number.isFinite(scale) && scale > 0 ? Math.min(3, Math.max(0.3, scale)) : 1;
+  settings.baseSizePx = BASE_SIZE_PX * s;
+  settings.comboSizeStepPx = BASE_COMBO_STEP_PX * s;
+}
+
+// 設定パネルの「スタンプの透明度」を反映する(glyphScaleと同じ考え方)。
+function applyGlyphOpacity(opacity) {
+  settings.glyphOpacity =
+    Number.isFinite(opacity) && opacity > 0 ? Math.min(1, Math.max(0.1, opacity)) : 1;
+}
+
+// 設定パネルの「連打すると大きくなる」チェックボックスを反映する。
+function applyComboGrowth(enabled) {
+  settings.comboGrowthEnabled = enabled !== false;
+}
+
+// 設定パネルの「個別リアクションごとの『大きくしない』チップ一覧」を反映する。
+// 受け取るのは常に「現在チェックが外れている(=大きくしない)ID全部」の配列
+// (set_overlay_no_combo_growth_ids/obs_bridge.rs参照。差分ではなく丸ごと置き換え)。
+function applyNoComboGrowthIds(ids) {
+  settings.noComboGrowthIds = new Set(Array.isArray(ids) ? ids : []);
+}
+
+/**
+ * リアクションの種類(emoji-set.jsのanimフィールド)ごとのアニメーション設定。
+ *   motion: 画面上での動きの種類(下のcomputeMotionPath参照)。省略時は'rise'
+ *     (下から出てきて上に上がっていく、既定の動き)。
+ *   riseFactor: motionが使う「移動距離」の倍率(1で標準、小さいほど動きが小さい。
+ *     riseという名前だが、motionが'fall'/'collapse'の場合は下方向の距離に使う)
+ *   driftFactor: 移動方向に対して直角の「揺れ」の倍率
+ *   durationFactor: 全体の表示時間の倍率(ゆっくり漂わせたいものは長めに)
+ *   particles: 追加で発生させる装飾パーティクルの指定(無ければ何も出さない)
+ */
+const ANIM_PRESETS = {
+  laugh: { motion: 'rise', riseFactor: 1, durationFactor: 1.0 },
+  clap: {
+    motion: 'rise',
+    riseFactor: 0.9,
+    durationFactor: 0.9,
+    // 「もっとパチパチパチと拍手するように」という要望への対応。自己アニメーション
+    // (anim-clap。overlay.html参照)自体を細かい拍手を複数回連続で刻む内容に
+    // 描き直した上、既定(duration*0.42・3回ループ)より速いテンポで多めに
+    // ループさせることで「連打で手を叩いている」感を強める
+    // (glyphAnimDurationFactor/glyphAnimIterations。spawnReaction参照)。
+    glyphAnimDurationFactor: 0.3,
+    glyphAnimIterations: 5,
+    particles: { shape: 'streak', count: 6, spread: 42, life: 550, color: 'rgba(255,248,214,0.9)' },
+  },
+  heartbeat: {
+    motion: 'rise',
+    riseFactor: 1.1,
+    durationFactor: 1.15,
+    particles: { shape: 'glyph', glyphs: ['💕', '💗', '❤️'], count: 4, spread: 34, life: 1300, drift: 'up' },
+  },
+  // 😮 驚き: 画面端から勢いよく飛び込んでくる(不意打ちで驚かせるイメージ)
+  pop: {
+    motion: 'sideIn',
+    riseFactor: 0.85,
+    durationFactor: 0.9,
+    particles: { shape: 'ring', life: 500 },
+  },
+  flicker: {
+    motion: 'rise',
+    riseFactor: 1.15,
+    durationFactor: 0.95,
+    particles: { shape: 'dot', color: '#ffb347', count: 7, spread: 30, life: 900, drift: 'up' },
+  },
+  // 😭 泣: 上ではなく、しゃくり上げながら下に沈んでいく
+  sob: {
+    motion: 'fall',
+    riseFactor: 0.7,
+    durationFactor: 1.0,
+    particles: { shape: 'glyph', glyphs: ['💧'], count: 3, spread: 20, life: 900, drift: 'down' },
+  },
+  // 🎉 GG: 左右に大きくジグザグに揺れながら勢いよく上昇する、一番躍動感のある動き。
+  // 絵文字のデザイン上いつも同じ向き(右向き)になってしまうので、randomFlipで
+  // 半分くらいの確率で左右反転させ、単調にならないようにする。
+  confetti: {
+    motion: 'zigzagRise',
+    riseFactor: 1.0,
+    driftFactor: 1.2,
+    durationFactor: 1.05,
+    randomFlip: true,
+    particles: { shape: 'confetti', count: 16, life: 1100, drift: 'burst' },
+  },
+  // 💀 死んだ: その場でくずおれるように少しだけ沈む(上がらない)。
+  // fullRangeY: 画面下部だけでなく、画面のどこにでも現れるようにする
+  // (要望: 「こちらも下部でしか表示されないのでどこでも表示するように」)。
+  faint: {
+    motion: 'collapse',
+    riseFactor: 0.5,
+    durationFactor: 1.1,
+    noOuterRotate: true,
+    fullRangeY: true,
+  },
+  // 🥺 お願い: キラキラの粒は不要とのことなので削除(動き自体はそのまま)
+  plead: {
+    motion: 'rise',
+    riseFactor: 0.9,
+    durationFactor: 1.3,
+  },
+  // 草: 地面から生えてくるイメージなので、下から上に伸びる動きのまま
+  grass: { motion: 'rise', riseFactor: 0.95, durationFactor: 1.1 },
+  thumbsup: {
+    motion: 'rise',
+    riseFactor: 1.05,
+    durationFactor: 0.9,
+    particles: { shape: 'glyph', glyphs: ['⭐'], count: 4, spread: 32, life: 900, drift: 'up' },
+  },
+  // 😱 ヒヤッと: 大写しでいきなり出現してから通常サイズに落ち着く「ジャンプスケア」
+  jumpscare: { motion: 'burstZoom', riseFactor: 1, durationFactor: 0.95 },
+  flex: {
+    motion: 'rise',
+    riseFactor: 1,
+    durationFactor: 1.05,
+    particles: { shape: 'streak', count: 3, spread: 26, life: 400, color: 'rgba(255,255,255,0.7)' },
+  },
+  // 😴 眠い: 舟をこぐようにゆっくり下に沈んでいく(💤は上に浮かぶ対比を付ける)
+  doze: {
+    motion: 'fall',
+    riseFactor: 0.4,
+    durationFactor: 1.6,
+    particles: { shape: 'glyph', glyphs: ['💤'], count: 2, spread: 18, life: 1700, drift: 'up' },
+  },
+  // 🎯 的中: ダーツのように画面端から一直線に飛んできて命中する
+  bullseye: {
+    motion: 'sideIn',
+    riseFactor: 0.85,
+    durationFactor: 0.75,
+    particles: { shape: 'ring', life: 350, small: true },
+  },
+
+  // ---- ここから追加分 ----
+
+  // 🤪 おどけ: 千鳥足のようにグラグラ揺れながら上がる
+  zany: { motion: 'rise', riseFactor: 0.9, durationFactor: 1.0 },
+  // 🤔 考え中: あまり動かず、ゆっくり浮かんで消える。吹き出し(💭)が上に漂う
+  think: {
+    motion: 'rise',
+    riseFactor: 0.6,
+    durationFactor: 1.5,
+    particles: { shape: 'glyph', glyphs: ['💭'], count: 2, spread: 22, life: 1300, drift: 'up' },
+  },
+  // 🆗 OK: その場にハンコを押すようにドンと出て、あまり動かず消える。
+  // fullRangeY: 画面下部だけでなく、画面のどこにでも現れるようにする
+  // (要望: 「今下部にしか表示されないのでどこでも出るようにして」)。
+  ok: {
+    motion: 'collapse',
+    riseFactor: 0.3,
+    durationFactor: 0.85,
+    noOuterRotate: true,
+    fullRangeY: true,
+    glyphAnim: 'stamp',
+    particles: { shape: 'ring', life: 380, small: true },
+  },
+  // 🍌 バナナ: くるくる回転しながら上がる
+  banana: { motion: 'rise', riseFactor: 1.0, durationFactor: 1.0, glyphAnim: 'spin' },
+  // 🐸 カエル: ぴょんぴょん跳ねながら画面を横切る専用モーション(下のcomputeMotionPath参照)
+  frog: { motion: 'hop', riseFactor: 1, durationFactor: 1.1, glyphAnim: 'hop' },
+  // 🥭🍑 フルーツ: 弾むように軽くバウンドしながら上がる(共通)
+  mango: { motion: 'rise', riseFactor: 0.85, durationFactor: 1.0, glyphAnim: 'bounce' },
+  peach: { motion: 'rise', riseFactor: 0.85, durationFactor: 1.0, glyphAnim: 'bounce' },
+  // 🍻 乾杯: 登場時にグラスをぶつけるようにカチンと揺れ、泡(粒)が上がる
+  cheers: {
+    motion: 'rise',
+    riseFactor: 0.95,
+    durationFactor: 1.0,
+    particles: { shape: 'dot', color: '#ffe08a', count: 5, spread: 26, life: 800, drift: 'up' },
+  },
+  // ⏱🕔 時間系: 針が行ったり来たりするように小さく振れながらゆっくり上がる(共通)
+  tick: { motion: 'rise', riseFactor: 0.7, durationFactor: 1.2, glyphAnim: 'tick' },
+  // ⬆⬇➡⬅ 矢印: 見たままの方向にまっすぐ飛ぶ。グリフ自体もその方向へ一瞬伸びる
+  // 「ダッシュ」演出(glyphAnim:'dash'で共有)を付ける。
+  arrowUp: {
+    motion: 'rise',
+    riseFactor: 1.3,
+    driftFactor: 0,
+    durationFactor: 0.8,
+    glyphAnim: 'dash',
+    particles: { shape: 'streak', count: 3, spread: 14, life: 350, color: 'rgba(255,255,255,0.6)' },
+  },
+  arrowDown: {
+    motion: 'fall',
+    riseFactor: 1.3,
+    driftFactor: 0,
+    durationFactor: 0.8,
+    glyphAnim: 'dash',
+  },
+  arrowRight: {
+    motion: 'sideIn',
+    forceFromLeft: true,
+    riseFactor: 1,
+    durationFactor: 0.8,
+    glyphAnim: 'dash',
+  },
+  arrowLeft: {
+    motion: 'sideIn',
+    forceFromLeft: false,
+    riseFactor: 1,
+    durationFactor: 0.8,
+    glyphAnim: 'dash',
+  },
+
+  // ---- ここから追加分(ネガティブ・ポジティブ新規リアクション) ----
+
+  // 💩: 上から落ちてきて、最後に着地でバウンドする(fallBounceモーション。
+  // computeMotionPath参照)
+  poop: {
+    motion: 'fallBounce',
+    riseFactor: 1,
+    durationFactor: 1.15,
+    noOuterRotate: true,
+  },
+  // 👺: 左から右へ勢いよく進み、そのまま少し留まったあと、消える間際に
+  // その場で弾けて爆発するように消滅する(explodeAtEnd。spawnReaction参照)。
+  // 以前はレーザービーム演出を到着直後に出していたが「ダサい」との要望で廃止。
+  tengu: {
+    motion: 'sideIn',
+    forceFromLeft: true,
+    riseFactor: 1,
+    durationFactor: 0.85,
+    glyphAnim: 'dash',
+    explodeAtEnd: true,
+  },
+  // 😡: プルプルと震えながら怒りの湯気(パーティクル)を上げる
+  angry: {
+    motion: 'rise',
+    riseFactor: 0.85,
+    durationFactor: 0.95,
+    glyphAnim: 'angry',
+    particles: { shape: 'dot', color: '#ff5252', count: 4, spread: 20, life: 550, drift: 'up' },
+  },
+  // 👎: ブーイングしながら首を振るように下へ落ちていく
+  boo: {
+    motion: 'fall',
+    riseFactor: 0.8,
+    durationFactor: 1.0,
+    glyphAnim: 'boo',
+  },
+  // 🖕: 下から挑発的に上がってくる(💪と同じ「決めポーズ」感の自己アニメーションを流用)
+  provoke: {
+    motion: 'rise',
+    riseFactor: 1.1,
+    durationFactor: 0.9,
+    glyphAnim: 'flex',
+  },
+  // 💣: 落下して着地したあと、2〜3秒待ってからランダムなタイミングで爆発する。
+  // 待ち時間・爆発演出はspawnReaction側の専用処理(preset.explodeDelayRangeMs)で扱う。
+  bomb: {
+    motion: 'quickFall',
+    riseFactor: 1.6,
+    durationFactor: 2.6,
+    noOuterRotate: true,
+    explodeDelayRangeMs: [2000, 3000],
+    particles: { shape: 'ring', life: 500 },
+  },
+  // 🧨: 爆竹らしく、画面下の方から左右どちらかランダムな斜め上方向へ跳ねる
+  // ように急上昇する(popUpモーション。computeMotionPath参照)。跳ね上がった
+  // 先(頂点)で火花(パーティクル)を散らす。
+  firecracker: {
+    motion: 'popUp',
+    riseFactor: 1,
+    durationFactor: 1.05,
+    noOuterRotate: true,
+    glyphAnim: 'firecracker',
+    particles: { shape: 'dot', color: '#ffb347', count: 8, spread: 32, life: 500, drift: 'burst' },
+  },
+  // 🍜: ふわふわ左右に揺れながら上がっていく。steam: 絵文字のすぐ上に、
+  // 表示されている間ずっと絵文字自身を追尾する湯気エフェクトを付ける
+  // (以前は開始位置に1回だけ薄い粒を飛ばすだけで、動く絵文字には
+  // 追従していなかった。spawnReaction参照)。
+  ramen: {
+    motion: 'rise',
+    riseFactor: 0.9,
+    driftFactor: 1.7,
+    durationFactor: 1.35,
+    glyphAnim: 'sway',
+    steam: true,
+  },
+  // 🍣: 勢いよく登場してその場にどんと構える(🆗のスタンプ演出違いバージョン)。
+  // fullRangeY: 画面下部だけでなく、画面のどこにでも現れるようにする。
+  sushi: {
+    motion: 'collapse',
+    riseFactor: 0.3,
+    durationFactor: 0.95,
+    noOuterRotate: true,
+    fullRangeY: true,
+    glyphAnim: 'punch',
+  },
+  // 🎂: 紙吹雪と一緒に楽しげに弾みながら上がっていく、お祝いムード
+  cake: {
+    motion: 'rise',
+    riseFactor: 1.0,
+    durationFactor: 1.15,
+    glyphAnim: 'bounce',
+    particles: { shape: 'confetti', count: 14, life: 1000 },
+  },
+  // ⚽: 上下左右のどこかから飛んできて、画面内で数回跳ね返ってから止まる
+  // (ballBounceモーション。computeMotionPath参照)
+  soccer: {
+    motion: 'ballBounce',
+    riseFactor: 1,
+    durationFactor: 1.2,
+    glyphAnim: 'spin',
+  },
+
+  // ---- ここから追加分(短文リアクション・追加の動物リアクション) ----
+
+  // それな/わかる/うまい/神: ニコニコ動画のコメントのように画面右から左へ
+  // 流れて消える短文リアクション共通プリセット(色だけemoji-set.js側の
+  // colorフィールドでリアクションごとに変える)。
+  nicoflow: {
+    motion: 'nicoFlow',
+    durationFactor: 1.3,
+  },
+  // 👶 赤ちゃん: 画面のあちこちを縦横無尽にハイハイして回る(wanderモーション)。
+  // 自己アニメーション(anim-crawl)で、はいはいの上下動を表現する。
+  crawl: {
+    motion: 'wander',
+    riseFactor: 1,
+    durationFactor: 1.6,
+    glyphAnim: 'crawl',
+  },
+  // 🐧 ペンギン: 同じくwanderモーションであちこちとことこ歩き回るが、
+  // 自己アニメーション(anim-waddle)は左右に揺れるヨチヨチ歩きにしてある。
+  waddle: {
+    motion: 'wander',
+    riseFactor: 0.85,
+    durationFactor: 1.6,
+    glyphAnim: 'waddle',
+  },
+  // 🐈 ネコ: 画面を縦横無尽に、走る・止まる・跳びかかるを気ままに繰り返す
+  // (prowlモーション。computeMotionPath参照)。足取りは軽い小刻みな上下動(anim-catstep)。
+  // 黒猫にするかどうかはemoji-set.jsのblackChance(spawnReaction参照)。
+  prowl: {
+    motion: 'prowl',
+    riseFactor: 1,
+    durationFactor: 1.8,
+    glyphAnim: 'catstep',
+    glyphAnimDurationFactor: 0.08,
+    glyphAnimIterations: 20,
+  },
+  // 🍙 おにぎり: おむすびころりん。画面の上の方のランダムな高さから、右上→左下か
+  // 左上→右下へ、くるくる回りながら小さく弾んで斜めに転がっていく(rollモーション)
+  onigiri: {
+    motion: 'roll',
+    riseFactor: 1,
+    durationFactor: 1.5,
+  },
+  // 🍒 さくらんぼ: 上からふわっと降りてきながら、茎を支点に振り子のように揺れる
+  // (anim-cherry)。まわりにキラキラとハートが舞う。
+  cherry: {
+    motion: 'fall',
+    riseFactor: 0.7,
+    durationFactor: 1.2,
+    glyphAnim: 'cherry',
+    glyphAnimDurationFactor: 0.25,
+    glyphAnimIterations: 4,
+    particles: { shape: 'glyph', glyphs: ['✨', '💗', '✨'], count: 5, spread: 36, life: 1200, drift: 'up' },
+  },
+  // 🐶 ワンワン: 「ワン!」と吠える勢いのある自己アニメーション(anim-bark)+
+  // 吠え声を表す小さな輪(ring)を添える。
+  bark: {
+    motion: 'rise',
+    riseFactor: 0.75,
+    durationFactor: 1.0,
+    glyphAnim: 'bark',
+    particles: { shape: 'ring', life: 300, small: true },
+  },
+  // 🐷 ブーブー: 「ブー!」と鳴いて可愛らしく揺れる自己アニメーション(anim-oink)。
+  oink: {
+    motion: 'rise',
+    riseFactor: 0.8,
+    durationFactor: 1.05,
+    glyphAnim: 'oink',
+    particles: { shape: 'dot', color: '#ffb6d9', count: 3, spread: 18, life: 500, drift: 'up' },
+  },
+  // 👊 拳: 「停止状態で出て拳で!」という要望通り、その場にどんと構えて
+  // (collapseモーション+既存の🍣と同じ勢いよく飛び出す自己アニメーション
+  // 「punch」を流用)、出現と同時に漫画風の集中線(radialLines)を放射する。
+  fistbump: {
+    motion: 'collapse',
+    riseFactor: 0.2,
+    durationFactor: 0.9,
+    noOuterRotate: true,
+    fullRangeY: true,
+    glyphAnim: 'punch',
+    particles: { shape: 'radialLines', count: 12, life: 420, color: 'rgba(255,255,255,0.92)' },
+  },
+  // 🎆 花火: 画面のランダムな位置にほぼその場に留まり(collapseモーション)、
+  // 本体+近くの2地点で少しずつタイミングをずらして次々にバーストする
+  // (fireworksBurst。spawnReaction/spawnFireworkBurst参照)。「ド派手に」という
+  // 要望に応え、単発の爆発より賑やかな花火大会らしい見た目にしてある。
+  fireworks: {
+    motion: 'collapse',
+    riseFactor: 0.1,
+    durationFactor: 1.3,
+    noOuterRotate: true,
+    fullRangeY: true,
+    glyphAnim: 'firework',
+    fireworksBurst: true,
+  },
+};
+
+const CONFETTI_COLORS = ['#ff6b6b', '#ffd93d', '#6bcfef', '#a06bff', '#6bff9e', '#ff9e6b'];
+const DRIFT_ANIM = {
+  up: 'particle-up',
+  down: 'particle-down',
+  burst: 'particle-burst',
+  twinkle: 'particle-twinkle',
+};
+
+const activeItems = [];
+const comboState = new Map();
+const COMBO_WINDOW_MS = 1500;
+
+// このページは2つの方法で開かれうる:
+//   1. Tauri本体の透明オーバーレイウィンドウとして(window.__TAURI__が使える)
+//      → 従来通りTauriのイベント経由でリアクションを受け取る
+//   2. OBSの「ブラウザ」ソースとして、ただのWebページとして開かれた場合
+//      (window.__TAURI__は存在しない) → 配信者アプリが同じPC上でローカルに
+//      立てているWebSocketブリッジ(obs_bridge.rs参照)に直接繋いで受け取る。
+//      OBSの通常のウィンドウキャプチャだと、このアプリの透明ウィンドウの
+//      透明部分がうまく抜けずデスクトップが映り込んでしまう実機不具合が
+//      あったため、この方式を用意している。
+if (window.__TAURI__ && window.__TAURI__.event) {
+  const sendStageSize = () => {
+    window.__TAURI__.core
+      .invoke('set_overlay_stage_size', { w: window.innerWidth, h: window.innerHeight })
+      .catch(() => {});
+  };
+  sendStageSize();
+  window.addEventListener('resize', sendStageSize);
+  window.__TAURI__.event.listen('overlay:reaction', (event) => {
+    playReaction(event.payload);
+  });
+  // 設定パネルの「絵文字の大きさ」を起動時に反映し、設定パネルで変更される
+  // たびにも(このウィンドウを閉じ直さなくても)即座に反映されるようにする。
+  window.__TAURI__.event.listen('overlay:settings', (event) => {
+    const payload = event.payload || {};
+    if (typeof payload.glyphScale === 'number') applyGlyphScale(payload.glyphScale);
+    if (typeof payload.glyphOpacity === 'number') applyGlyphOpacity(payload.glyphOpacity);
+    if (typeof payload.comboGrowthEnabled === 'boolean') applyComboGrowth(payload.comboGrowthEnabled);
+    if (Array.isArray(payload.noComboGrowthIds)) applyNoComboGrowthIds(payload.noComboGrowthIds);
+  });
+  window.__TAURI__.core
+    .invoke('get_overlay_settings')
+    .then((s) => {
+      applyGlyphScale(s.glyphScale);
+      applyGlyphOpacity(s.glyphOpacity);
+      applyComboGrowth(s.comboGrowthEnabled);
+      applyNoComboGrowthIds(s.noComboGrowthIds);
+    })
+    .catch(() => {});
+} else {
+  const OBS_BRIDGE_WS_PORT = 18771;
+  connectObsBridge(OBS_BRIDGE_WS_PORT);
+}
+
+// ReaCastがアップデートされて起動し直したら、画面を読み込み直す(shared/comment-common.jsと同じ)
+let seenAppVersion = null;
+
+function connectObsBridge(port) {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+  ws.addEventListener('message', (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (!data) return;
+      if (data.type === 'appVersion') {
+        if (seenAppVersion !== null && seenAppVersion !== data.version) location.reload();
+        seenAppVersion = data.version;
+        return;
+      }
+      // 配信者アプリ側で設定を変更した時にも同じ内容が届く(obs_bridge.rs参照)。
+      // OBS側はTauriのinvokeが使えないので、この経路が唯一の反映手段になる。
+      if (data.type === 'settings') {
+        if (typeof data.glyphScale === 'number') applyGlyphScale(data.glyphScale);
+        if (typeof data.glyphOpacity === 'number') applyGlyphOpacity(data.glyphOpacity);
+        if (typeof data.comboGrowthEnabled === 'boolean') applyComboGrowth(data.comboGrowthEnabled);
+        if (Array.isArray(data.noComboGrowthIds)) applyNoComboGrowthIds(data.noComboGrowthIds);
+        if (typeof data.stageW === 'number' && typeof data.stageH === 'number') applyStageSize(data.stageW, data.stageH);
+        return;
+      }
+      if (typeof data.emoji === 'string') playReaction(data);
+    } catch {
+      // 想定外のメッセージは無視する
+    }
+  });
+  // 配信者アプリの再起動などで切れても、自動で繋ぎ直しを試み続ける
+  ws.addEventListener('close', () => setTimeout(() => connectObsBridge(port), 1500));
+  ws.addEventListener('error', () => ws.close());
+}
+
+function getComboLevel(emojiId) {
+  const now = Date.now();
+  const prev = comboState.get(emojiId);
+  let count = 1;
+  if (prev && now - prev.lastTs <= COMBO_WINDOW_MS) {
+    count = Math.min(prev.count + 1, settings.comboMaxSteps);
+  }
+  comboState.set(emojiId, { count, lastTs: now });
+  return count;
+}
+
+/**
+ * 動きの種類ごとに、開始位置・初期transform・最終transform(・必要なら途中経過の
+ * ウェイポイント)を計算する。「下から上に上がる」一辺倒だったのを、リアクションの
+ * 性格に合わせて上から降ってくる・横から飛び込んでくる・ジグザグに揺れながら
+ * 上がる・その場で急に大写しになる、といったバリエーションを持たせるための関数。
+ *
+ * 返り値:
+ *   startX/startY: 開始位置(el.style.left/top)
+ *   initialTransform/finalTransform: 開始/終了時点のtransform
+ *   moveDuration: このtransition(transform)にかける時間(msの表示時間全体とは
+ *     別に、動き自体は短めに終わらせたい場合(ジグザグの各区間、バーストの出現等)
+ *     に使う)
+ *   easing: transitionのeasing関数
+ *   waypoints: [{atMs, transform}, ...] 途中でtransformを更新するタイミング
+ *     (ジグザグのような多段階の動きに使う。無ければ2点間の単純な動き)
+ *   endX/endY: 最終的なだいたいの位置(パーティクルの発生位置の計算に使う)
+ */
+// OBSのブラウザソースを小さめのサイズで使っている場合等、比例計算のままだと
+// 上端・下端を突き抜けてから(画面外で)フェードが終わる=「早々に見切れて
+// 消えたように見える」という指摘があったための安全マージン。上下それぞれ、
+// 表示領域の8%は必ず残して、フェードアウトが終わるまで画面内に留まるようにする。
+const EDGE_MARGIN_RATIO = 0.08;
+
+function clampRiseDistance(startY, riseDistance, vh) {
+  const maxRise = Math.max(0, startY - vh * EDGE_MARGIN_RATIO);
+  return Math.min(riseDistance, maxRise);
+}
+
+function clampFallDistance(startY, fallDistance, vh, size) {
+  const maxFall = Math.max(0, vh * (1 - EDGE_MARGIN_RATIO) - size - startY);
+  return Math.min(fallDistance, maxFall);
+}
+
+// 'rise'/'fall'/'zigzagRise'以外の動きにも、それぞれの見切れ方に合わせた
+// 安全マージンを追加する(ディスプレイ拡大表示やOBSブラウザソースを小さめに
+// 設定している環境で、フェードし終わる前に画面端へ到達してしまう指摘への対応)。
+
+// sideIn(画面端から登場): 到着位置が反対側の端まで行き過ぎないようにする。
+// 開始位置は完全に画面外(offscreen)なので、travel(移動距離)が
+// vw*(1-EDGE_MARGIN_RATIO)を超えないようにするだけで、到着側の端に十分な
+// 余白が残る(オフスクリーン開始位置のサイズ分は式の中で自然に相殺される)。
+function clampSideTravel(travel, vw) {
+  return Math.min(travel, vw * (1 - EDGE_MARGIN_RATIO));
+}
+
+// burstZoom(大写しで出現): 開始時点でscale(2.4)まで拡大されるため、通常の
+// サイズ(size)基準でランダムな開始位置を選ぶと、拡大された見た目が画面端を
+// はみ出してしまうことがある。開始位置の抽選範囲に、拡大時の余分な広がり
+// (overhang)を差し引いた余白を確保しておく。
+function clampBurstZoomStart(vw, vh, size, maxScale) {
+  const overhang = (size * (maxScale - 1)) / 2;
+  const marginX = vw * EDGE_MARGIN_RATIO + overhang;
+  const marginY = vh * EDGE_MARGIN_RATIO + overhang;
+  const rangeX = Math.max(0, vw - marginX * 2 - size);
+  const rangeY = Math.max(0, vh * 0.5 - overhang * 2);
+  return {
+    startX: marginX + rand() * rangeX,
+    startY: Math.max(vh * 0.2, marginY) + rand() * rangeY,
+  };
+}
+
+// hop(カエルが跳ねる): 跳ねるたびに一時的に本来の位置より高く上がる
+// (waypointsのピーク)ので、跳躍を重ねるうちに累積した最高到達点が画面上端の
+// 余白を超えないよう、跳躍の高さそのものを開始位置から逆算して制限する。
+function clampHopHeight(startY, hopHeight, netRisePerHop, hopCount, vh) {
+  // 最後の跳躍のピーク時が最も高く上がる瞬間: 直前までの正味上昇分
+  // ((hopCount-1)回分)+ そのジャンプ自体の高さ、が画面上端の余白を
+  // 超えないようにする。
+  const priorNetRise = netRisePerHop * (hopCount - 1);
+  const maxHopHeight = Math.max(20, startY - vh * EDGE_MARGIN_RATIO - priorNetRise);
+  return Math.min(hopHeight, maxHopHeight);
+}
+
+function computeMotionPath(motion, preset, size, vw, vh, duration) {
+  const driftFactor = preset.driftFactor ?? 1;
+  const riseFactor = preset.riseFactor ?? 1;
+  const rotate = preset.noOuterRotate ? 0 : (rand() - 0.5) * 60;
+
+  if (motion === 'fall') {
+    // 画面上部に出現し、ゆっくり下へ沈んでいく(泣き顔がうなだれる、眠気で船を
+    // こぐように下がっていく、等)
+    const startX = rand() * (vw - size);
+    const startY = rand() * (vh * 0.2);
+    const drift = (rand() - 0.5) * 200 * driftFactor;
+    const fallDistance = clampFallDistance(startY, (vh * 0.55 + size) * riseFactor, vh, size);
+    return {
+      startX,
+      startY,
+      initialTransform: 'translate(0, 0) rotate(0deg) scale(0.6)',
+      finalTransform: `translate(${drift}px, ${fallDistance}px) rotate(${rotate}deg) scale(1)`,
+      moveDuration: duration,
+      easing: 'cubic-bezier(.17,.67,.35,1)',
+      endX: startX + drift,
+      endY: startY + fallDistance,
+    };
+  }
+
+  if (motion === 'sideIn') {
+    // 画面端から勢いよく登場し、画面内へ流れ込む(驚き=不意打ちで視界に入って
+    // くる、的中=ダーツのように命中する、を表現)。左右どちらから出すかは通常
+    // ランダムだが、矢印(➡⬅)のように向きそのものに意味がある場合は
+    // preset.forceFromLeftで固定できる(true=左から右へ、false=右から左へ)。
+    const fromLeft = preset.forceFromLeft ?? rand() < 0.5;
+    const startY = vh * 0.15 + rand() * (vh * 0.55);
+    const startX = fromLeft ? -size : vw;
+    const travel = clampSideTravel((vw * 0.55 + size) * driftFactor, vw);
+    const endDx = fromLeft ? travel : -travel;
+    const bob = (rand() - 0.5) * 80;
+    return {
+      startX,
+      startY,
+      initialTransform: `translate(0, 0) rotate(${fromLeft ? -20 : 20}deg) scale(0.7)`,
+      finalTransform: `translate(${endDx}px, ${bob}px) rotate(${rotate}deg) scale(1)`,
+      moveDuration: Math.round(duration * 0.85),
+      easing: 'cubic-bezier(.22,.61,.36,1)',
+      endX: startX + endDx,
+      endY: startY + bob,
+    };
+  }
+
+  if (motion === 'zigzagRise') {
+    // 上昇しながら左右に大きく揺れる、一番躍動感のある動き(GG向け)。
+    // 単純な2点間の動きではなく、waypointsで3段階の経由地点を刻んで
+    // ジグザグに見せる(最後の要素が最終的な着地姿勢)。
+    const startX = vw * 0.5 - size / 2 + (rand() - 0.5) * vw * 0.3;
+    const startY = vh - size - rand() * (vh * 0.2);
+    const riseDistance = clampRiseDistance(startY, (vh * 0.62 + size) * riseFactor, vh);
+    const swing = 100 * driftFactor;
+    const legDuration = Math.round(duration * 0.25);
+    return {
+      startX,
+      startY,
+      // waypoints指定時はこのinitialTransformが最初の見た目になる(rAFでwaypoints[0]に
+      // 差し替わるまでの一瞬の初期値)。opacityが0の間なので実際には見えないが、
+      // 他のmotionと同じ「小さく現れて広がる」入り方に揃えておく。
+      initialTransform: 'translate(0, 0) rotate(0deg) scale(0.6)',
+      moveDuration: legDuration,
+      easing: 'cubic-bezier(.34,1.56,.64,1)',
+      waypoints: [
+        {
+          atMs: 0,
+          transform: `translate(${swing}px, -${riseDistance * 0.35}px) rotate(${rotate * 0.6}deg) scale(1.08)`,
+        },
+        {
+          atMs: legDuration,
+          transform: `translate(${-swing}px, -${riseDistance * 0.68}px) rotate(${-rotate * 0.6}deg) scale(0.96)`,
+        },
+        {
+          atMs: legDuration * 2,
+          transform: `translate(${swing * 0.4}px, -${riseDistance * 0.9}px) rotate(${rotate * 0.4}deg) scale(1.04)`,
+        },
+        {
+          atMs: legDuration * 3,
+          transform: `translate(${swing * 0.3}px, -${riseDistance}px) rotate(${rotate}deg) scale(1)`,
+        },
+      ],
+      endX: startX,
+      endY: startY - riseDistance,
+    };
+  }
+
+  if (motion === 'burstZoom') {
+    // 突然大写しで現れ、通常サイズに落ち着く「ジャンプスケア」的な出現(ヒヤッと向け)。
+    // 開始時点でscale(2.4)まで拡大されるため、開始位置は拡大後の見た目が
+    // 画面端をはみ出さない範囲から選ぶ(clampBurstZoomStart参照)。
+    const BURST_ZOOM_MAX_SCALE = 2.4;
+    const { startX, startY } = clampBurstZoomStart(vw, vh, size, BURST_ZOOM_MAX_SCALE);
+    const jitter = (rand() - 0.5) * 40 * driftFactor;
+    return {
+      startX,
+      startY,
+      initialTransform: `translate(0, 0) rotate(0deg) scale(${BURST_ZOOM_MAX_SCALE})`,
+      finalTransform: `translate(${jitter}px, ${jitter}px) rotate(${rotate * 0.3}deg) scale(1)`,
+      moveDuration: Math.round(duration * 0.32),
+      easing: 'cubic-bezier(.36,1.7,.5,1)',
+      endX: startX + jitter,
+      endY: startY + jitter,
+    };
+  }
+
+  if (motion === 'collapse') {
+    // 力尽きてその場に少し崩れ落ちる(スカル向け。グリフ自身は anim-faint で
+    // 横に倒れる動きをするので、外側はあまり動かさず沈む距離だけ小さく持たせる)。
+    // preset.fullRangeY: 🍣寿司のように「画面下部だけでなくどこにでも現れて
+    // ほしい」場合は、開始Y座標を画面の縦方向ほぼ全域からランダムに選ぶ。
+    const startX = rand() * (vw - size);
+    let startY;
+    if (preset.fullRangeY) {
+      const marginY = vh * EDGE_MARGIN_RATIO;
+      startY = marginY + rand() * Math.max(1, vh - marginY * 2 - size);
+    } else {
+      startY = vh - size - rand() * (vh * 0.25);
+    }
+    const sinkDistance = clampFallDistance(startY, 26 * riseFactor, vh, size);
+    return {
+      startX,
+      startY,
+      initialTransform: 'translate(0, 0) rotate(0deg) scale(1)',
+      finalTransform: `translate(0, ${sinkDistance}px) rotate(${rotate}deg) scale(0.86)`,
+      moveDuration: duration,
+      easing: 'ease-out',
+      endX: startX,
+      endY: startY + sinkDistance,
+    };
+  }
+
+  if (motion === 'hop') {
+    // 🐸 カエル: ぴょんぴょん跳ねながら画面を左右どちらかへ横切りつつ、
+    // 少しずつ上へ移動する専用モーション。waypointsで「跳ねる頂点」と
+    // 「着地」を交互に3回刻み、pogoスティックのような動きにする。
+    const goRight = rand() < 0.5;
+    const dir = goRight ? 1 : -1;
+    const startX = goRight
+      ? size + rand() * (vw * 0.15)
+      : vw - size - rand() * (vw * 0.15);
+    const startY = vh - size - rand() * (vh * 0.15);
+    const hopStepX = vw * 0.12 * (0.7 + rand() * 0.5);
+    const netRisePerHop = vh * 0.045 * riseFactor;
+    const hopCount = 3;
+    // 跳躍を重ねるたびに正味では少しずつ上へ移動していくため、最後の跳躍の
+    // ピーク時が最も高く上がる瞬間になる。そこが画面上端の余白を超えないよう、
+    // 跳ねる高さ自体をstartYから逆算して制限する(clampHopHeight参照)。
+    const hopHeight = clampHopHeight(
+      startY,
+      (vh * 0.14 + size * 0.25) * riseFactor,
+      netRisePerHop,
+      hopCount,
+      vh
+    );
+    const legDuration = Math.round((duration * 0.85) / (hopCount * 2));
+    const waypoints = [];
+    let curX = 0;
+    let curY = 0;
+    for (let hop = 1; hop <= hopCount; hop++) {
+      // 跳ねる頂点(高く上がりつつ、進行方向へ動く)
+      curX += hopStepX * 0.55 * dir;
+      curY -= hopHeight;
+      waypoints.push({
+        atMs: legDuration * (hop * 2 - 1),
+        transform: `translate(${curX}px, ${curY}px) rotate(${dir * -8}deg) scale(1.05, 0.9)`,
+      });
+      // 着地(正味では少しだけ上に、横にはさらに進む)
+      curX += hopStepX * 0.45 * dir;
+      curY += hopHeight - netRisePerHop;
+      waypoints.push({
+        atMs: legDuration * hop * 2,
+        transform: `translate(${curX}px, ${curY}px) rotate(0deg) scale(1.08, 0.85)`,
+      });
+    }
+    waypoints.push({
+      atMs: legDuration * hopCount * 2 + Math.round(legDuration * 0.4),
+      transform: `translate(${curX}px, ${curY}px) rotate(0deg) scale(1)`,
+    });
+    return {
+      startX,
+      startY,
+      initialTransform: 'translate(0, 0) rotate(0deg) scale(0.6)',
+      moveDuration: legDuration,
+      easing: 'cubic-bezier(.45,1.4,.4,1)',
+      waypoints,
+      endX: startX + curX,
+      endY: startY + curY,
+    };
+  }
+
+  if (motion === 'fallBounce') {
+    // 💩: 上から落ちてきて、着地後に何度かバウンドしながら自然に静止する。
+    //
+    // 以前はバウンドの高さ・タイミングを固定値で書いたスクリプト演出だった
+    // ため「物理エンジンが乗っているみたいに自然に」という要望に対しては
+    // いかにも作り物めいた動きに見えていた。⚽(ballBounce。下記参照)と
+    // 同じ考え方で、重力・反発係数による刻み時間シミュレーションに置き換える
+    // (縦方向のみの単純な1次元シミュレーション)。
+    const startX = rand() * (vw - size);
+    const startY = rand() * (vh * 0.15);
+    // groundYは開始位置からの相対的な落下距離(=床のY座標)。シミュレーションは
+    // この相対座標系(y=0が開始位置)で行う。
+    const groundY = clampFallDistance(startY, (vh * 0.62 + size) * riseFactor, vh, size);
+
+    let y = 0;
+    let vy = 0;
+    // 重力は「どれだけ落ちるか(groundY)」に比例させ、距離が長いほど自然に
+    // 加速して見えるようにする(距離が短い場合でも最低限の落下感は出るよう
+    // 下限を設ける)。
+    const gravity = Math.max(2200, groundY * 11);
+    // 💩は⚽ほど勢いよく弾まないよう、反発係数はやや控えめにする。
+    const restitution = 0.38 + rand() * 0.14;
+    const dtMs = 45;
+    const dt = dtMs / 1000;
+    const simBudgetMs = Math.round(duration * 0.72);
+    const wobbleDir = rand() < 0.5 ? -1 : 1;
+
+    const waypoints = [];
+    let t = 0;
+    let bounces = 0;
+    let settled = false;
+    while (t < simBudgetMs && bounces < 6 && !settled) {
+      vy += gravity * dt;
+      y += vy * dt;
+      let squishX = 1;
+      let squishY = 1;
+      if (y >= groundY) {
+        y = groundY;
+        vy = -vy * restitution;
+        bounces++;
+        // 着地の瞬間だけ、潰れて見えるよう横に少し広がらせる(バウンドの
+        // 弾力感を出すための演出。物理量としては簡略化した近似)。
+        squishX = 1.16;
+        squishY = 0.82;
+        if (Math.abs(vy) < 55) {
+          vy = 0;
+          settled = true;
+        }
+      }
+      // 着地の反動が残っている間だけ、ごく小さく左右に揺れる(要望通り
+      // noOuterRotateのままなので、この揺れはpreset側の大きなランダム回転
+      // (rotate変数)とは別に、ここだけで完結する軽いぶれとして加える)。
+      const wobble = wobbleDir * Math.min(9, Math.abs(vy) * 0.012);
+      t += dtMs;
+      waypoints.push({
+        atMs: t,
+        legMs: dtMs,
+        transform: `translate(0, ${y}px) rotate(${wobble}deg) scale(${squishX}, ${squishY})`,
+      });
+    }
+    if (settled) {
+      // 最後に潰れ形状から通常の見た目へ戻す一手を足しておく(バウンド直後の
+      // 潰れたままのシルエットで静止させないため)。
+      waypoints.push({
+        atMs: t + dtMs,
+        legMs: dtMs,
+        transform: `translate(0, ${groundY}px) rotate(0deg) scale(1)`,
+      });
+    }
+    if (waypoints.length === 0) {
+      waypoints.push({ atMs: dtMs, legMs: dtMs, transform: 'translate(0, 0) rotate(0deg) scale(1)' });
+    }
+
+    return {
+      startX,
+      startY,
+      initialTransform: 'translate(0, 0) rotate(0deg) scale(0.7)',
+      moveDuration: dtMs,
+      easing: 'linear',
+      waypoints,
+      endX: startX,
+      endY: startY + groundY,
+    };
+  }
+
+  if (motion === 'quickFall') {
+    // 💣: すばやく落下して着地する(その後、しばらく待ってから爆発する演出は
+    // spawnReaction側のpreset.explodeDelayRangeMs処理で行う)。
+    // 着地する高さは、常に画面下部固定ではなく、開始位置より下・画面内の
+    // 余白を除いた範囲からランダムに選ぶ(要望: 着地位置を全範囲ランダムに)。
+    const startX = rand() * (vw - size);
+    const startY = rand() * (vh * 0.15);
+    const drift = (rand() - 0.5) * 60 * driftFactor;
+    const marginY = vh * EDGE_MARGIN_RATIO;
+    const minLandY = Math.max(startY + size * 0.5, marginY);
+    const maxLandY = Math.max(minLandY, vh - marginY - size);
+    const landY = minLandY + rand() * Math.max(0, maxLandY - minLandY);
+    const fallDistance = Math.max(0, landY - startY);
+    // 落下距離が短い(高い位置に着地する)場合は短く、長い(画面下の方まで
+    // 落ちる)場合は長く、距離に応じてtransition時間を按分する。
+    const baselineFall = vh * 0.85;
+    const moveDuration = Math.round(
+      duration * Math.min(0.34, Math.max(0.12, 0.3 * (fallDistance / baselineFall)))
+    );
+    return {
+      startX,
+      startY,
+      initialTransform: 'translate(0, 0) rotate(0deg) scale(0.7)',
+      finalTransform: `translate(${drift}px, ${fallDistance}px) rotate(${rotate * 0.4}deg) scale(1)`,
+      moveDuration,
+      easing: 'cubic-bezier(.4,0,.7,1)',
+      endX: startX + drift,
+      endY: startY + fallDistance,
+    };
+  }
+
+  if (motion === 'popUp') {
+    // 🧨 爆竹: 画面下の方に現れて、左右どちらかランダムな斜め上方向へ、
+    // 跳ねるように2段階で急上昇する(爆竹が弾ける勢いのイメージ)。
+    const dir = rand() < 0.5 ? -1 : 1;
+    const startX = Math.min(Math.max(size, rand() * (vw - size)), vw - size);
+    const startY = vh - size - rand() * (vh * 0.12);
+    const jumpX = vw * (0.07 + rand() * 0.08) * dir;
+    const jumpY = clampRiseDistance(startY, (vh * 0.3 + size) * riseFactor, vh);
+    const legDuration = Math.round(duration * 0.22);
+    const waypoints = [
+      {
+        atMs: legDuration,
+        legMs: legDuration,
+        transform: `translate(${jumpX * 0.55}px, -${jumpY * 0.6}px) rotate(${dir * -18}deg) scale(1.08, 0.9)`,
+      },
+      {
+        atMs: legDuration * 2,
+        legMs: legDuration,
+        transform: `translate(${jumpX}px, -${jumpY}px) rotate(${dir * -8}deg) scale(1)`,
+      },
+    ];
+    return {
+      startX,
+      startY,
+      initialTransform: 'translate(0, 0) rotate(0deg) scale(0.6)',
+      moveDuration: legDuration,
+      easing: 'cubic-bezier(.3,1.4,.4,1)',
+      waypoints,
+      endX: startX + jumpX,
+      endY: startY - jumpY,
+    };
+  }
+
+  if (motion === 'ballBounce') {
+    // ⚽: 実際に重力・反発を刻み時間でシミュレートし、画面の上下左右いずれかの
+    // 端から飛んできて、床・天井・左右の壁に当たるたびにバウンドしながら
+    // 徐々に勢いが弱まって止まる(「もっと物理エンジンが乗っかってるみたいに」
+    // という要望への対応。厳密な物理単位ではなく見た目重視の簡易シミュレーション)。
+    const marginX = vw * EDGE_MARGIN_RATIO;
+    const marginY = vh * EDGE_MARGIN_RATIO;
+    const floorY = vh - marginY - size;
+    const ceilY = marginY;
+    const leftX = marginX;
+    const rightX = Math.max(leftX, vw - marginX - size);
+
+    const edge = ['top', 'bottom', 'left', 'right'][Math.floor(rand() * 4)];
+    // 「ボールの勢いをもう少し早めで」という要望に対応し、速度レンジを底上げ
+    // する(重力(下記gravity)はspeedに比例させてあるので、速くしても
+    // 軌道の「見た目のバランス」自体は保たれる)。
+    const speed = (vw + vh) * (0.42 + rand() * 0.26) * riseFactor;
+    let x, y, vx, vy;
+    if (edge === 'top') {
+      x = marginX + rand() * Math.max(1, vw - marginX * 2 - size);
+      y = ceilY;
+      vx = (rand() - 0.5) * speed * 0.7;
+      vy = speed * 0.3;
+    } else if (edge === 'bottom') {
+      x = marginX + rand() * Math.max(1, vw - marginX * 2 - size);
+      y = floorY;
+      vx = (rand() - 0.5) * speed * 0.7;
+      // 「下から上に投げ込まれるのが無い」という指摘への対応: 以前は上向きの
+      // 初速がvy=-speed*0.85にとどまっており、直後の重力で早々に引き戻されて
+      // 目立たなかった。画面下端から明確に高く跳ね上がって見えるよう初速を
+      // 強める。
+      vy = -speed * 1.05;
+    } else if (edge === 'left') {
+      x = leftX;
+      y = marginY + rand() * Math.max(1, vh - marginY * 2 - size);
+      vx = speed * 0.8;
+      vy = -speed * 0.3;
+    } else {
+      x = rightX;
+      y = marginY + rand() * Math.max(1, vh - marginY * 2 - size);
+      vx = -speed * 0.8;
+      vy = -speed * 0.3;
+    }
+    const startX = x;
+    const startY = y;
+
+    const gravity = speed * 1.6;
+    const restitution = 0.56 + rand() * 0.12;
+    const dtMs = 45;
+    const dt = dtMs / 1000;
+    // 「消える瞬間まで動き続けるように」という指摘への対応。以前は
+    // duration*0.6→0.92と budget を伸ばして対応したつもりだったが、実際には
+    // 反発を繰り返すうちに(現実の物理と同様)速度が急速に失われて早々に
+    // 静止してしまい、simBudgetMsに到達する前に「止まった状態」のまま
+    // 表示され続けてしまっていた(=budgetを伸ばしても、静止自体が早い時点で
+    // 起きるので意味が無かった)。根本的に直すため、縦方向の弾みがほぼ収まった
+    // 後は完全に静止させるのではなく、床の上をゆっくり転がり続ける
+    // 「転がりフェーズ」に切り替える(壁に当たれば跳ね返って向きを変える)。
+    // これにより、bounces回数や静止判定によって早期にループを打ち切ることも
+    // なくなり、simBudgetMs(=表示時間のほぼ全域)いっぱいまで、必ず何かしら
+    // 動き続けるようになる。
+    //
+    // 追加修正(3度目の指摘): duration*0.94でもなお、消える約0.25〜0.35秒前
+    // ("duration*0.06 + 100ms"の完全な静止区間)でボールが止まって見える、
+    // という報告があった。要素の実際の除去はspawnReaction側で
+    // "duration + 100ms"後に行われる(下記参照)ため、simBudgetMsをdurationの
+    // ほぼ全域(duration-30ms、要素除去のわずかに直前)まで伸ばし、この静止
+    // ギャップをほぼ解消する。
+    const simBudgetMs = Math.max(dtMs * 2, Math.round(duration - 30));
+    const rollSpeed = speed * (0.05 + rand() * 0.03);
+
+    const waypoints = [];
+    let t = 0;
+    let rotateAcc = 0;
+    let bounces = 0;
+    let rolling = false;
+    let rollDir = rand() < 0.5 ? -1 : 1;
+    while (t < simBudgetMs) {
+      if (!rolling) {
+        vy += gravity * dt;
+        x += vx * dt;
+        y += vy * dt;
+
+        if (x < leftX) {
+          x = leftX;
+          vx = -vx * restitution;
+          bounces++;
+        } else if (x > rightX) {
+          x = rightX;
+          vx = -vx * restitution;
+          bounces++;
+        }
+        if (y < ceilY) {
+          y = ceilY;
+          vy = -vy * restitution;
+          bounces++;
+        } else if (y > floorY) {
+          y = floorY;
+          vy = -vy * restitution;
+          bounces++;
+          if (Math.abs(vy) < speed * 0.05) vy = 0;
+        }
+
+        rotateAcc += vx * dt * 0.6;
+
+        // 縦方向の弾みがほぼ収まった(床の上でvy=0)、またはバウンド回数が
+        // 多くなりすぎた場合は、完全静止させる代わりに転がりフェーズへ移行する。
+        if ((y >= floorY - 1 && vy === 0) || bounces >= 9) {
+          rolling = true;
+          y = floorY;
+          vy = 0;
+          vx = rollDir * rollSpeed;
+        }
+      } else {
+        // 転がりフェーズ: 床の上を一定のゆっくりした速さで転がり続け、
+        // 左右の壁に当たったら跳ね返って向きを変える(縦方向には動かさない)。
+        x += vx * dt;
+        if (x < leftX) {
+          x = leftX;
+          vx = rollSpeed;
+        } else if (x > rightX) {
+          x = rightX;
+          vx = -rollSpeed;
+        }
+        y = floorY;
+        rotateAcc += vx * dt * 0.6;
+      }
+
+      t += dtMs;
+      waypoints.push({
+        atMs: t,
+        legMs: dtMs,
+        transform: `translate(${x - startX}px, ${y - startY}px) rotate(${rotateAcc}deg) scale(1)`,
+      });
+    }
+    if (waypoints.length === 0) {
+      waypoints.push({ atMs: dtMs, legMs: dtMs, transform: 'translate(0, 0) rotate(0deg) scale(1)' });
+    }
+
+    return {
+      startX,
+      startY,
+      initialTransform: 'translate(0, 0) rotate(0deg) scale(0.85)',
+      moveDuration: dtMs,
+      easing: 'linear',
+      waypoints,
+      endX: x,
+      endY: y,
+    };
+  }
+
+  if (motion === 'nicoFlow') {
+    // それな/わかる/うまい/神 等の短文リアクション向け: ニコニコ動画の
+    // コメントのように、画面の右端から左端へ一定速度(linear)で流れて消える。
+    // 文字数によって要素の見た目の幅が変わるため、開始位置は画面右端の外側
+    // (vw)固定にし、移動距離を画面幅より大きめ(1.35倍)に取ることで、
+    // 長い文言でも確実に画面外まで流れきってから消えるようにしてある。
+    const startX = vw;
+    const startY = vh * 0.08 + rand() * (vh * 0.8);
+    const travel = vw * 1.35 * driftFactor;
+    return {
+      startX,
+      startY,
+      initialTransform: 'translate(0, 0) scale(1)',
+      finalTransform: `translate(${-travel}px, 0) scale(1)`,
+      moveDuration: duration,
+      easing: 'linear',
+      endX: startX - travel,
+      endY: startY,
+    };
+  }
+
+  if (motion === 'wander') {
+    // 👶🐧: 一方向に流れるのではなく、画面のあちこちを縦横無尽にとことこ
+    // 移動する専用モーション。ランダムな向きへの短い移動(waypoints)を
+    // 複数回つなげてジグザグに歩き回るように見せる(hopの「横断」版に近いが、
+    // 上下左右どちらへも自由に動く点が異なる)。画面端に近づきすぎた場合は
+    // 進行方向を反転させ、画面外へ出てしまわないようにする。
+    const stepCount = 5;
+    const marginX = vw * EDGE_MARGIN_RATIO;
+    const marginY = vh * EDGE_MARGIN_RATIO;
+    const startX = marginX + rand() * Math.max(1, vw - marginX * 2 - size);
+    const startY = marginY + rand() * Math.max(1, vh - marginY * 2 - size);
+    let curX = startX;
+    let curY = startY;
+    const stepDist = Math.min(vw, vh) * 0.14 * riseFactor;
+    const legDuration = Math.max(200, Math.round(duration / stepCount));
+    const waypoints = [];
+    for (let i = 1; i <= stepCount; i++) {
+      const angle = rand() * Math.PI * 2;
+      let dx = Math.cos(angle) * stepDist * (0.7 + rand() * 0.6);
+      // 縦方向は横方向より控えめにし、床の上を移動しているような見た目にする
+      let dy = Math.sin(angle) * stepDist * (0.7 + rand() * 0.6) * 0.6;
+      if (curX + dx < marginX || curX + dx > vw - marginX - size) dx = -dx;
+      if (curY + dy < marginY || curY + dy > vh - marginY - size) dy = -dy;
+      curX += dx;
+      curY += dy;
+      // 進行方向(左右)にあわせて絵文字ごと反転させ、歩いている方を向かせる
+      const facingLeft = dx < 0;
+      waypoints.push({
+        atMs: legDuration * i,
+        legMs: legDuration,
+        transform: `translate(${curX - startX}px, ${curY - startY}px) scale(${facingLeft ? -1 : 1}, 1)`,
+      });
+    }
+    return {
+      startX,
+      startY,
+      initialTransform: 'translate(0, 0) scale(1, 1)',
+      moveDuration: legDuration,
+      easing: 'ease-in-out',
+      waypoints,
+      endX: curX,
+      endY: curY,
+    };
+  }
+
+  if (motion === 'roll') {
+    // 🍙: 画面の外(左右どちらか)の上の方から入ってきて、反対側の下の方へ、転がる
+    // (進んだ距離の分だけ回る)・小さく弾むを繰り返しながら斜めに転がって出ていく
+    const fromRight = rand() < 0.5;
+    const dir = fromRight ? -1 : 1;
+    const startX = fromRight ? vw + size * 0.2 : -size * 1.2;
+    const startY = vh * (0.04 + rand() * 0.26);
+    const endX = fromRight ? -size * 1.4 : vw + size * 0.4;
+    const endY = Math.min(vh - size, startY + vh * (0.22 + rand() * 0.25));
+    const dx = endX - startX;
+    const dy = endY - startY;
+    const legs = 7;
+    // 消え始める(表示時間の75%)より少し前に、画面の外まで転がり切る
+    const leg = Math.max(120, Math.round((duration * 0.72) / (legs * 2)));
+    const radius = size / 2;
+    const waypoints = [];
+    let t = 0;
+    let angle = 0;
+    for (let i = 1; i <= legs; i++) {
+      const f0 = (i - 0.5) / legs;
+      const f1 = i / legs;
+      const hop = size * (0.18 + rand() * 0.14);
+      // 弾んだ頂点
+      angle += ((dx / legs / 2) / radius) * (180 / Math.PI) * 0.9;
+      waypoints.push({ atMs: t, legMs: leg, transform: `translate(${dx * f0}px, ${dy * f0 - hop}px) rotate(${angle}deg)` });
+      t += leg;
+      // 着地(少しつぶれる)
+      angle += ((dx / legs / 2) / radius) * (180 / Math.PI) * 0.9;
+      waypoints.push({ atMs: t, legMs: leg, transform: `translate(${dx * f1}px, ${dy * f1}px) rotate(${angle}deg) scale(1.06, 0.94)` });
+      t += leg;
+    }
+    return {
+      startX,
+      startY,
+      initialTransform: 'translate(0, 0) rotate(0deg)',
+      moveDuration: leg,
+      easing: 'cubic-bezier(.35,.1,.45,1)',
+      waypoints,
+      endX,
+      endY,
+    };
+  }
+
+  if (motion === 'prowl') {
+    // 🐈: 猫らしく、画面のあちこちを気ままに縦横無尽に動き回る。「ダッと素早く
+    // 走る」「ぴたっと止まって様子をうかがう」「ぴょんと跳びかかる」をランダムに
+    // つなげる(wanderより速く、上下にも大きく動く)。画面の外へは出ない。
+    const marginX = vw * EDGE_MARGIN_RATIO;
+    const marginY = vh * EDGE_MARGIN_RATIO;
+    const minX = marginX;
+    const maxX = Math.max(minX + 1, vw - marginX - size);
+    const minY = marginY;
+    const maxY = Math.max(minY + 1, vh - marginY - size);
+    const startX = minX + rand() * (maxX - minX);
+    const startY = minY + rand() * (maxY - minY);
+    const clampX = (x) => Math.min(maxX, Math.max(minX, x));
+    const clampY = (y) => Math.min(maxY, Math.max(minY, y));
+    let curX = startX;
+    let curY = startY;
+    // 🐈は元の絵文字が左を向いているので、右へ進む時に左右反転させる
+    let facingRight = false;
+    const flip = () => `scale(${facingRight ? -1 : 1}, 1)`;
+    const segments = 7;
+    // フェードアウト(表示時間の75%から)までに動きを終えるよう、全体の約7割に収める
+    const unit = (duration * 0.7) / segments;
+    const span = Math.min(vw, vh) * riseFactor;
+    const waypoints = [];
+    let t = 0;
+    // atMsはその区間を動き始める時刻(最初の区間はすぐに始まる)、legMsはその区間の長さ。
+    // chaseを付けた区間は、その時に画面に他のリアクションがあれば、そっちへ走って
+    // じゃれつく動きに差し替える(spawnReactionのchaseTransform参照)
+    const push = (x, y, legMs, extra = '', chase = null) => {
+      const leg = Math.max(120, Math.round(legMs));
+      waypoints.push({ atMs: t, legMs: leg, transform: `translate(${x - startX}px, ${y - startY}px) ${flip()}${extra}`, chase });
+      t += leg;
+    };
+    for (let i = 0; i < segments; i++) {
+      const r = rand();
+      const angle = rand() * Math.PI * 2;
+      if (i > 0 && r < 0.22) {
+        // ぴたっと止まる(少しかがんで様子をうかがう)
+        push(curX, curY, unit * 0.9, ' scale(1.05, 0.92)');
+      } else if (r < 0.5) {
+        // ぴょんと跳びかかる: 弧を描くように、上がってから着地する
+        const dist = span * (0.18 + rand() * 0.12);
+        const nx = clampX(curX + Math.cos(angle) * dist);
+        const ny = clampY(curY + Math.sin(angle) * dist * 0.6);
+        facingRight = nx > curX;
+        const peak = Math.min(curY, ny) - span * 0.12;
+        push((curX + nx) / 2, clampY(peak), unit * 0.4, ' rotate(-8deg)');
+        push(nx, ny, unit * 0.4, ' scale(1.08, 0.9)');
+        curX = nx;
+        curY = ny;
+      } else {
+        // ダッと走る: 遠くまで素早く(他のリアクションがあれば、そっちへ走ってじゃれつく)
+        const dist = span * (0.25 + rand() * 0.2);
+        const nx = clampX(curX + Math.cos(angle) * dist);
+        const ny = clampY(curY + Math.sin(angle) * dist);
+        facingRight = nx > curX;
+        push(nx, ny, unit * 0.55, '', 'run');
+        // 着いたら前足でちょいちょい(じゃれる相手がいない時は、軽く身構えるだけ)
+        push(nx, ny, unit * 0.25, ' scale(1.05, 0.94)', 'paw');
+        push(nx, ny, unit * 0.25, '', 'paw2');
+        curX = nx;
+        curY = ny;
+      }
+    }
+    // 消え始める(表示時間の75%)まで動き続けるよう、全体の時間を合わせて伸ばす
+    const scaleT = t > 0 ? (duration * 0.75) / t : 1;
+    for (const wp of waypoints) {
+      wp.atMs = Math.round(wp.atMs * scaleT);
+      wp.legMs = Math.max(120, Math.round(wp.legMs * scaleT));
+    }
+    return {
+      startX,
+      startY,
+      minX,
+      maxX,
+      minY,
+      maxY,
+      initialTransform: 'translate(0, 0) scale(1, 1)',
+      // 最初の区間は、出現時の移動時間(moveDuration)で動く
+      moveDuration: waypoints.length ? waypoints[0].legMs : unit * 0.55,
+      easing: 'cubic-bezier(.3,.1,.3,1)',
+      waypoints,
+      endX: curX,
+      endY: curY,
+    };
+  }
+
+  // 'rise'(既定): 下から出てきて上に上がっていく
+  const startX = rand() * (vw - size);
+  const startY = vh - size - rand() * (vh * 0.3);
+  const drift = (rand() - 0.5) * 240 * driftFactor;
+  const riseDistance = clampRiseDistance(startY, (vh * 0.6 + size) * riseFactor, vh);
+  return {
+    startX,
+    startY,
+    initialTransform: 'translate(0, 0) rotate(0deg) scale(0.6)',
+    finalTransform: `translate(${drift}px, -${riseDistance}px) rotate(${rotate}deg) scale(1)`,
+    moveDuration: duration,
+    easing: 'cubic-bezier(.17,.67,.35,1)',
+    endX: startX + drift,
+    endY: startY - riseDistance,
+  };
+}
+
+/**
+ * 🌈 虹: 画面のどこかに雲が出て、左から右へ7色の帯が少しずつ伸びて、虹の橋がかかる。
+ * 帯はSVGの弧(pathLength=1)で、stroke-dashoffsetを1→0にして伸ばす。
+ */
+function spawnRainbow(opts) {
+  enforceMaxConcurrent();
+  const vw = stageW();
+  const vh = stageH();
+  const w = Math.min(vw * 0.6, settings.baseSizePx * 7);
+  const h = w * 0.55;
+  const el = document.createElement('div');
+  el.className = 'reaction-item rainbow-item' + (opts && opts.mark ? ' self-mark' : '');
+  el.style.left = `${Math.max(0, rand() * (vw - w))}px`;
+  el.style.top = `${Math.max(0, rand() * (vh - h))}px`;
+  el.style.width = `${w}px`;
+  el.style.height = `${h}px`;
+  el.style.opacity = '0';
+  el.style.transition = 'opacity 300ms ease-out';
+  const colors = ['#ff4d4d', '#ffa04d', '#ffe14d', '#5dd36b', '#4da6ff', '#5b6cff', '#b06cff'];
+  const band = w / 2 / 11;
+  const cx = w / 2;
+  const cy = h * 0.98;
+  const arcs = colors
+    .map((c, i) => {
+      const r = w / 2 - band * (i + 0.6);
+      return `<path d="M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}" pathLength="1" fill="none" stroke="${c}" stroke-width="${band * 1.02}" stroke-linecap="butt" stroke-dasharray="1" stroke-dashoffset="1" style="transition: stroke-dashoffset 1500ms cubic-bezier(.4, .1, .3, 1) ${i * 70}ms"/>`;
+    })
+    .join('');
+  el.innerHTML = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="overflow: visible">${arcs}</svg>`;
+  // 虹の両端に雲(先に左の雲が出て、そこから虹が伸び、右の雲に届く)
+  const cloud = (x, delay) => {
+    const c = document.createElement('span');
+    c.className = 'reaction-glyph rainbow-cloud';
+    c.textContent = '☁️';
+    c.style.position = 'absolute';
+    c.style.fontSize = `${band * 4.2}px`;
+    c.style.left = `${x - band * 2.3}px`;
+    c.style.top = `${cy - band * 3.4}px`;
+    c.style.opacity = '0';
+    c.style.transition = `opacity 300ms ease-out ${delay}ms, transform 400ms cubic-bezier(.2, 1.5, .4, 1) ${delay}ms`;
+    c.style.transform = 'scale(0.4)';
+    el.appendChild(c);
+    return c;
+  };
+  const left = cloud(band * 1.6, 0);
+  const right = cloud(w - band * 1.6, 1350);
+  stage.appendChild(el);
+  activeItems.push(el);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      el.style.opacity = String(settings.glyphOpacity);
+      for (const c of [left, right]) {
+        c.style.opacity = '1';
+        c.style.transform = 'scale(1)';
+      }
+      // 雲が出てから虹を伸ばし始める
+      setTimeout(() => {
+        for (const p of el.querySelectorAll('path')) p.style.strokeDashoffset = '0';
+      }, 250);
+    });
+  });
+  const total = Math.max(3200, settings.animationDurationMs * 1.4);
+  setTimeout(() => {
+    el.style.transition = 'opacity 700ms ease-in';
+    el.style.opacity = '0';
+  }, total - 700);
+  setTimeout(() => {
+    el.remove();
+    const idx = activeItems.indexOf(el);
+    if (idx !== -1) activeItems.splice(idx, 1);
+  }, total);
+}
+
+/**
+ * 🏩 ホテル: 画面のどこかにホテルがぽんっと建って、生き物系のリアクション
+ * (emoji-set.jsでcreature:trueのもの。🐸🐧🐶🐷🐈と、顔の絵文字・👺💀)が2匹ペアでとことこ入っていき、
+ * ホテルの上にハートがふわふわ浮かぶ。
+ * 画面に生き物が出ていれば、近い子から2匹がそのままホテルへ向かう(元の動きは止めて
+ * 引き継ぐ)。足りない分は、ランダムな生き物が画面の端から歩いてくる。
+ * 全部をまとめた1つの要素(画面全体の大きさ)をactiveItemsに入れて、最後にまとめて消す。
+ */
+let hotelStyleAdded = false;
+function addHotelStyle() {
+  if (hotelStyleAdded) return;
+  hotelStyleAdded = true;
+  const st = document.createElement('style');
+  st.textContent = `
+    .hotel-part { position: absolute; line-height: 1; }
+    .hotel-hop { display: inline-block; animation: hotel-hop 260ms ease-in-out infinite alternate; }
+    @keyframes hotel-hop { from { transform: translateY(0); } to { transform: translateY(-16%); } }
+    .hotel-shake { animation: hotel-shake 120ms ease-in-out 6 alternate; }
+    @keyframes hotel-shake { from { transform: rotate(-3deg) scale(1.02); } to { transform: rotate(3deg) scale(0.98); } }
+    .hotel-heart { animation: hotel-heart 1700ms ease-out forwards; }
+    @keyframes hotel-heart {
+      0% { opacity: 0; transform: translate(0, 0) scale(0.3); }
+      15% { opacity: 1; transform: translate(0, -10%) scale(1.1); }
+      100% { opacity: 0; transform: translate(var(--drift, 0px), -260%) scale(0.9); }
+    }
+  `;
+  document.head.appendChild(st);
+}
+
+function spawnHotel(opts) {
+  addHotelStyle();
+  enforceMaxConcurrent();
+  const vw = stageW();
+  const vh = stageH();
+  const base = settings.baseSizePx;
+  const hotelSize = base * 2;
+  const margin = base * 0.5;
+
+  const box = document.createElement('div');
+  box.className = 'reaction-item hotel-scene' + (opts && opts.mark ? ' self-mark' : '');
+  box.dataset.noChase = '1';
+  box.style.left = '0';
+  box.style.top = '0';
+  box.style.width = `${vw}px`;
+  box.style.height = `${vh}px`;
+  box.style.opacity = String(settings.glyphOpacity);
+  box.style.transition = 'opacity 600ms ease-in';
+  stage.appendChild(box);
+  activeItems.push(box);
+
+  const part = (char, size, x, y) => {
+    const p = document.createElement('span');
+    p.className = 'hotel-part';
+    p.style.left = `${x}px`;
+    p.style.top = `${y}px`;
+    p.style.fontSize = `${size}px`;
+    const g = document.createElement('span');
+    g.className = 'reaction-glyph';
+    setGlyph(g, char);
+    p.appendChild(g);
+    box.appendChild(p);
+    return p;
+  };
+
+  // ホテル(上にハートが浮かぶので、画面の上の方は少し空けておく)
+  const hx = margin + rand() * Math.max(0, vw - hotelSize - margin * 2);
+  const hy = Math.max(base * 2.2, margin) + rand() * Math.max(0, vh - hotelSize - base * 2.2 - margin);
+  const hotel = part('🏩', hotelSize, hx, hy);
+  hotel.dataset.prop = '1';
+  hotel.style.transform = 'scale(0)';
+  hotel.style.transformOrigin = '50% 100%';
+  hotel.style.transition = 'transform 450ms cubic-bezier(.2, 1.6, .4, 1)';
+  requestAnimationFrame(() => requestAnimationFrame(() => (hotel.style.transform = 'scale(1)')));
+
+  // 入口(ホテルの下の真ん中)
+  const doorX = hx + hotelSize / 2;
+  const doorY = hy + hotelSize * 0.92;
+
+  // 画面に出ている生き物を、入口に近い順に2匹まで連れてくる
+  const pair = [];
+  const onScreen = activeItems
+    .filter((o) => o !== box && o.isConnected && o.dataset.creature && !o.dataset.dating)
+    .map((o) => ({ o, r: rectOf(o) }))
+    .filter((c) => c.r.width > 0)
+    .sort((a, b) => Math.hypot(a.r.left - doorX, a.r.top - doorY) - Math.hypot(b.r.left - doorX, b.r.top - doorY))
+    .slice(0, 2);
+  for (const { o, r } of onScreen) {
+    o.dataset.dating = '1';
+    const g = o.querySelector('.reaction-glyph');
+    pair.push({
+      char: g ? g.textContent : '🐶',
+      filter: o.style.filter,
+      size: Math.max(base * 0.6, Math.min(base * 1.6, r.height || base)),
+      x: r.left,
+      y: r.top,
+    });
+    o.remove();
+    const idx = activeItems.indexOf(o);
+    if (idx !== -1) activeItems.splice(idx, 1);
+  }
+  // 足りない分は、ランダムな生き物が画面の端から来る(左右から1匹ずつ)
+  const creatures = EMOJI_SET.filter((e) => e.creature);
+  while (pair.length < 2 && creatures.length) {
+    const e = creatures[Math.floor(rand() * creatures.length)];
+    const fromLeft = pair.length === 0 ? doorX > vw / 2 : !(pair[0].x < doorX);
+    pair.push({
+      char: e.char,
+      filter: e.blackChance && rand() < e.blackChance ? 'grayscale(1) brightness(0.32) contrast(1.6)' : '',
+      size: base,
+      x: fromLeft ? -base * 1.2 : vw + base * 0.2,
+      y: doorY - base * (0.6 + rand() * 0.8),
+    });
+  }
+
+  // とことこ歩いて入口へ。着いたら小さくなって中に入る
+  let lastIn = 0;
+  pair.forEach((c, i) => {
+    const w = part(c.char, c.size, c.x, c.y);
+    w.dataset.actor = '1';
+    w.dataset.creature = '1';
+    if (c.filter) w.style.filter = c.filter;
+    w.firstChild.classList.add('hotel-hop');
+    const tx = doorX - c.size / 2 + (i === 0 ? -c.size * 0.25 : c.size * 0.25);
+    const ty = doorY - c.size;
+    // 🐈は左向きの絵文字なので、右へ歩く時は左右反転する
+    if (c.char === '🐈' && tx > c.x) w.style.transform = 'scaleX(-1)';
+    const dist = Math.hypot(tx - c.x, ty - c.y);
+    const walkMs = Math.round(Math.min(2400, Math.max(900, dist * 2.2)));
+    const startMs = 450 + i * 300;
+    w.style.transition = `left ${walkMs}ms linear, top ${walkMs}ms linear, opacity 350ms ease-in, font-size 350ms ease-in`;
+    setTimeout(() => {
+      w.style.left = `${tx}px`;
+      w.style.top = `${ty}px`;
+    }, startMs);
+    setTimeout(() => {
+      w.firstChild.classList.remove('hotel-hop');
+      w.style.left = `${doorX - c.size * 0.15}px`;
+      w.style.top = `${doorY - c.size * 0.35}px`;
+      w.style.fontSize = `${c.size * 0.3}px`;
+      w.style.opacity = '0';
+    }, startMs + walkMs);
+    lastIn = Math.max(lastIn, startMs + walkMs + 350);
+  });
+
+  // 2匹とも入ったら、ホテルが揺れて、上にハートが浮かぶ
+  setTimeout(() => {
+    if (hotel.dataset.starred) return;
+    hotel.firstChild.classList.add('hotel-shake');
+    const hearts = ['💕', '💗', '💓', '💖', '💞'];
+    for (let i = 0; i < 6; i++) {
+      setTimeout(() => {
+        const size = base * (0.55 + rand() * 0.5);
+        const h = part(hearts[i % hearts.length], size, hx + hotelSize * (0.2 + rand() * 0.6) - size / 2, hy - size * 0.2);
+        h.firstChild.classList.add('hotel-heart');
+        h.firstChild.style.setProperty('--drift', `${Math.round((rand() - 0.5) * base)}px`);
+      }, 250 + i * 260);
+    }
+  }, lastIn);
+
+  const total = lastIn + 3200;
+  setTimeout(() => (box.style.opacity = '0'), total - 600);
+  setTimeout(() => {
+    box.remove();
+    const idx = activeItems.indexOf(box);
+    if (idx !== -1) activeItems.splice(idx, 1);
+  }, total);
+}
+
+/**
+ * 画面に出ているリアクションを、別の演出(🏩・🕶️)が引き継ぐ。元の要素は消して、同じ見た目の
+ * 「歩く役」を演出の要素(box)の中に作り直す。返すのは {el, size, x, y, glyph}。
+ */
+function takeOver(item, box) {
+  const r = rectOf(item);
+  const g = item.querySelector('.reaction-glyph');
+  const size = Math.max(settings.baseSizePx * 0.6, Math.min(settings.baseSizePx * 1.6, r.height || settings.baseSizePx));
+  item.remove();
+  const idx = activeItems.indexOf(item);
+  if (idx !== -1) activeItems.splice(idx, 1);
+  const el = document.createElement('span');
+  el.className = 'hotel-part';
+  el.dataset.actor = '1';
+  if (item.dataset.creature || item.dataset.emojiId === 'baby') el.dataset.creature = '1';
+  if (item.dataset.emojiId) el.dataset.emojiId = item.dataset.emojiId;
+  el.style.left = `${r.left}px`;
+  el.style.top = `${r.top}px`;
+  el.style.fontSize = `${size}px`;
+  if (item.style.filter) el.style.filter = item.style.filter;
+  const glyph = document.createElement('span');
+  glyph.className = 'reaction-glyph';
+  setGlyph(glyph, g ? g.textContent : '😂');
+  el.appendChild(glyph);
+  box.appendChild(el);
+  return { el, glyph, size, x: r.left, y: r.top };
+}
+
+/**
+ * 🕶️ グラサン: 画面のどこかにグラサンが置かれる。顔のリアクション(emoji-set.jsでface:true。
+ * 😂🥺😭💀👺🐶など)が画面にいれば、近い子がグラサンの所まで来て、グラサンをかけて
+ * キメる。誰もいない間はグラサンが置かれたまま待っていて、待っている間に顔のリアクションが
+ * 出てきたら、その子がかけに来る。最後まで誰も来なければ、置かれたまま消える。
+ */
+let shadesStyleAdded = false;
+function spawnSunglasses(opts) {
+  addHotelStyle();
+  if (!shadesStyleAdded) {
+    shadesStyleAdded = true;
+    const st = document.createElement('style');
+    st.textContent = `
+      .shades-cool { animation: shades-cool 700ms ease-in-out infinite alternate; }
+      @keyframes shades-cool { from { transform: rotate(-6deg); } to { transform: rotate(6deg) translateY(-4%); } }
+      .shades-sparkle { animation: shades-sparkle 900ms ease-out forwards; }
+      @keyframes shades-sparkle { 0% { opacity: 0; transform: scale(0.2) rotate(0deg); } 30% { opacity: 1; transform: scale(1.2) rotate(40deg); } 100% { opacity: 0; transform: scale(0.6) rotate(90deg); } }
+    `;
+    document.head.appendChild(st);
+  }
+  enforceMaxConcurrent();
+  const vw = stageW();
+  const vh = stageH();
+  const base = settings.baseSizePx;
+  const gSize = base * 1.1;
+  const margin = base * 0.8;
+
+  const box = document.createElement('div');
+  box.className = 'reaction-item shades-scene' + (opts && opts.mark ? ' self-mark' : '');
+  box.dataset.noChase = '1';
+  box.style.left = '0';
+  box.style.top = '0';
+  box.style.width = `${vw}px`;
+  box.style.height = `${vh}px`;
+  box.style.opacity = String(settings.glyphOpacity);
+  box.style.transition = 'opacity 600ms ease-in';
+  stage.appendChild(box);
+  activeItems.push(box);
+
+  // グラサン(少し傾けて置いてある)
+  const gx = margin + rand() * Math.max(0, vw - gSize - margin * 2);
+  const gy = margin + rand() * Math.max(0, vh - gSize - margin * 2);
+  const glasses = document.createElement('span');
+  glasses.dataset.prop = '1';
+  glasses.className = 'hotel-part';
+  glasses.style.left = `${gx}px`;
+  glasses.style.top = `${gy}px`;
+  glasses.style.fontSize = `${gSize}px`;
+  glasses.style.transform = 'scale(0) rotate(-8deg)';
+  glasses.style.transition = 'transform 450ms cubic-bezier(.2, 1.6, .4, 1)';
+  const gGlyph = document.createElement('span');
+  gGlyph.className = 'reaction-glyph';
+  gGlyph.textContent = '🕶️';
+  glasses.appendChild(gGlyph);
+  box.appendChild(glasses);
+  requestAnimationFrame(() => requestAnimationFrame(() => (glasses.style.transform = 'scale(1) rotate(-8deg)')));
+
+  const born = Date.now();
+  const waitUntil = born + Math.max(6000, settings.animationDurationMs * 2);
+  let finished = false;
+  const finish = (afterMs) => {
+    if (finished) return;
+    finished = true;
+    setTimeout(() => (box.style.opacity = '0'), afterMs);
+    setTimeout(() => {
+      box.remove();
+      const idx = activeItems.indexOf(box);
+      if (idx !== -1) activeItems.splice(idx, 1);
+    }, afterMs + 650);
+  };
+
+  const wear = (item) => {
+    const w = takeOver(item, box);
+    w.glyph.classList.add('hotel-hop');
+    // 顔の目のあたりがグラサンの位置に来るように歩いてくる
+    const fx = gx + gSize / 2 - w.size / 2;
+    const fy = gy + gSize / 2 - w.size * 0.38;
+    const dist = Math.hypot(fx - w.x, fy - w.y);
+    const walkMs = Math.round(Math.min(1800, Math.max(500, dist * 1.8)));
+    w.el.style.transition = `left ${walkMs}ms ease-out, top ${walkMs}ms ease-out`;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      w.el.style.left = `${fx}px`;
+      w.el.style.top = `${fy}px`;
+    }));
+    setTimeout(() => {
+      w.glyph.classList.remove('hotel-hop');
+      // グラサンがひょいっと持ち上がって、目の所にかかる
+      const gs = w.size * 0.74;
+      glasses.style.transition = 'left 380ms ease-out, top 380ms ease-out, font-size 380ms ease-out, transform 380ms cubic-bezier(.3, 1.4, .5, 1)';
+      glasses.style.left = `${fx + w.size / 2 - gs / 2}px`;
+      glasses.style.top = `${fy + w.size * 0.36 - gs / 2}px`;
+      glasses.style.fontSize = `${gs}px`;
+      glasses.style.transform = 'scale(1) rotate(0deg)';
+      glasses.style.zIndex = '1';
+      setTimeout(() => {
+        // かけたらキメる(顔とグラサンを一緒に揺らす)。キラッと光る
+        const pair = document.createElement('span');
+        pair.className = 'hotel-part shades-cool';
+        pair.style.left = '0';
+        pair.style.top = '0';
+        pair.style.transformOrigin = `${fx + w.size / 2}px ${fy + w.size}px`;
+        box.appendChild(pair);
+        pair.style.width = `${vw}px`;
+        pair.style.height = `${vh}px`;
+        pair.appendChild(w.el);
+        const gs2 = parseFloat(glasses.style.fontSize) || w.size * 0.74;
+        glasses.style.transition = 'none';
+        glasses.style.left = `${w.size / 2 - gs2 / 2}px`;
+        glasses.style.top = `${w.size * 0.36 - gs2 / 2}px`;
+        delete glasses.dataset.prop;
+        w.el.appendChild(glasses);
+        const sp = document.createElement('span');
+        sp.className = 'hotel-part';
+        sp.style.left = `${fx + w.size * 0.82}px`;
+        sp.style.top = `${fy + w.size * 0.05}px`;
+        sp.style.fontSize = `${w.size * 0.45}px`;
+        sp.innerHTML = '<span class="reaction-glyph shades-sparkle">✨</span>';
+        box.appendChild(sp);
+        finish(2800);
+      }, 400);
+    }, walkMs + 60);
+  };
+
+  // 顔のリアクションが来るのを待つ(0.3秒おきに見る)
+  const look = () => {
+    if (finished) return;
+    const now = Date.now();
+    if (now > waitUntil) {
+      finish(0);
+      return;
+    }
+    const cx = gx + gSize / 2;
+    const cy = gy + gSize / 2;
+    if (glasses.dataset.starred) {
+      finish(0);
+      return;
+    }
+    const face = activeItems
+      .filter((o) => o !== box && o.isConnected && o.dataset.face && !o.dataset.dating)
+      .map((o) => ({ o, r: rectOf(o) }))
+      .filter((c) => c.r.width > 0)
+      .sort((a, b) => Math.hypot(a.r.left - cx, a.r.top - cy) - Math.hypot(b.r.left - cx, b.r.top - cy))[0];
+    if (face && now - born > 450) {
+      face.o.dataset.dating = '1';
+      wear(face.o);
+      return;
+    }
+    setTimeout(look, 300);
+  };
+  setTimeout(look, 450);
+}
+
+/**
+ * 🍄 キノコ: 画面のどこかにキノコが生える(動かない)。生き物のリアクション(creature:true。
+ * 🐶🐸😂👺💀など)と👶が画面にいれば、近い子が寄ってきて食べる。食べるとランダムで
+ * 次のどれかが起きる(👶はいつも「大きくなる」):
+ *   grow     … マリオのようにピカピカしながら大きくなる
+ *   dead     … コテッと横に倒れて💀になり、👻が昇っていく
+ *   tasty    … めちゃくちゃうまくて感動(跳ねて、😍と✨とハートが出る)
+ *   spicy    … めちゃくちゃ辛くて真っ赤になり、口から🔥を吹く(💦も飛ぶ)
+ *   tiny     … ちっちゃくなって、画面の端までちょこちょこ逃げていく
+ *   trippy   … ワライタケ。色がぐるぐる変わりながら回って、💫が回る
+ * 誰も来なければ、そのまましばらくして消える。セリフ(文字)は出さず、動きと絵文字だけで見せる。
+ */
+/**
+ * 同じリアクションを、配信者の画面(Tauriのオーバーレイ)とOBSで同じ結果にするための乱数。
+ * ReaCastがリアクションごとに送る種(seed)から作る(mulberry32)。種が無ければMath.random
+ * (どちらの画面も別々にMath.randomで決めていたので、🍄の効果が画面ごとに違っていた)。
+ */
+function seededRandom(seed) {
+  if (typeof seed !== 'number' || !Number.isFinite(seed)) return Math.random;
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+let mushroomStyleAdded = false;
+const MUSHROOM_EFFECTS = ['grow', 'dead', 'tasty', 'spicy', 'tiny', 'trippy'];
+
+/** 🍄・🍎の場面(ホテル・グラサンと同じ部品)を作る前に、使うアニメーションを用意する */
+function addMushroomStyle() {
+  addHotelStyle();
+  if (!mushroomStyleAdded) {
+    mushroomStyleAdded = true;
+    const st = document.createElement('style');
+    st.textContent = `
+      .mush-chew { animation: mush-chew 160ms ease-in-out 5 alternate; }
+      @keyframes mush-chew { from { transform: translateY(0) scale(1, 1); } to { transform: translateY(4%) scale(1.06, 0.94); } }
+      .mush-shake { animation: mush-shake 90ms linear infinite alternate; }
+      @keyframes mush-shake { from { transform: translateX(-5%) rotate(-4deg); } to { transform: translateX(5%) rotate(4deg); } }
+      .mush-joy { animation: mush-joy 300ms ease-in-out infinite alternate; }
+      @keyframes mush-joy { from { transform: translateY(0) scale(1); } to { transform: translateY(-18%) scale(1.08); } }
+      .mush-trippy { animation: mush-trippy 1100ms linear infinite; }
+      @keyframes mush-trippy { from { filter: hue-rotate(0deg) saturate(2); transform: rotate(0deg); } to { filter: hue-rotate(360deg) saturate(2); transform: rotate(360deg); } }
+      .mush-fx { animation: mush-fx 1300ms ease-out forwards; }
+      @keyframes mush-fx {
+        0% { opacity: 0; transform: translate(0, 0) scale(0.4); }
+        20% { opacity: 1; transform: translate(calc(var(--dx, 0px) * 0.2), calc(var(--dy, 0px) * 0.2)) scale(1.1); }
+        100% { opacity: 0; transform: translate(var(--dx, 0px), var(--dy, 0px)) scale(var(--end, 1)); }
+      }
+    `;
+    document.head.appendChild(st);
+  }
+}
+
+/**
+ * 場面の上に、効果の文字や絵文字を出す(cx, cyが真ん中。dx, dyだけ動いて消える)
+ */
+function sceneFx(box, char, size, cx, cy, dx, dy, delay = 0, end = 1, cls = 'mush-fx') {
+  setTimeout(() => {
+    const p = document.createElement('span');
+    p.className = 'hotel-part';
+    p.style.left = `${cx - size / 2}px`;
+    p.style.top = `${cy - size / 2}px`;
+    p.style.fontSize = `${size}px`;
+    p.style.zIndex = '2';
+    const g = document.createElement('span');
+    g.className = `reaction-glyph ${cls}`;
+    setGlyph(g, char);
+    g.style.setProperty('--dx', `${dx}px`);
+    g.style.setProperty('--dy', `${dy}px`);
+    g.style.setProperty('--end', String(end));
+    p.appendChild(g);
+    box.appendChild(p);
+  }, delay);
+}
+
+function spawnMushroom(opts) {
+  addMushroomStyle();
+  // 位置と効果は、OBSと自分の画面で同じになるように種から決める
+  const rnd = seededRandom(opts && opts.seed);
+  enforceMaxConcurrent();
+  const vw = stageW();
+  const vh = stageH();
+  const base = settings.baseSizePx;
+  const mSize = base * 0.9;
+  // 大きくなる・火を吹く効果が画面からはみ出しにくいよう、端から少し離して生やす
+  const margin = Math.min(base * 2.2, Math.min(vw, vh) * 0.3);
+
+  const box = document.createElement('div');
+  box.className = 'reaction-item mushroom-scene' + (opts && opts.mark ? ' self-mark' : '');
+  box.dataset.noChase = '1';
+  box.style.left = '0';
+  box.style.top = '0';
+  box.style.width = `${vw}px`;
+  box.style.height = `${vh}px`;
+  box.style.opacity = String(settings.glyphOpacity);
+  box.style.transition = 'opacity 600ms ease-in';
+  stage.appendChild(box);
+  activeItems.push(box);
+
+  const fx = (...a) => sceneFx(box, ...a);
+
+  // キノコ(ぽんっと生える)
+  const mx = margin + rnd() * Math.max(0, vw - mSize - margin * 2);
+  const my = margin + rnd() * Math.max(0, vh - mSize - margin * 2);
+  // 食べた時の効果も、先に決めておく
+  const plannedEffect = MUSHROOM_EFFECTS[Math.floor(rnd() * MUSHROOM_EFFECTS.length)];
+  const mush = document.createElement('span');
+  mush.dataset.prop = '1';
+  mush.className = 'hotel-part';
+  mush.style.left = `${mx}px`;
+  mush.style.top = `${my}px`;
+  mush.style.fontSize = `${mSize}px`;
+  mush.style.transformOrigin = '50% 100%';
+  mush.style.transform = 'scale(0)';
+  mush.style.transition = 'transform 420ms cubic-bezier(.2, 1.6, .4, 1)';
+  mush.innerHTML = '<span class="reaction-glyph">🍄</span>';
+  box.appendChild(mush);
+  requestAnimationFrame(() => requestAnimationFrame(() => (mush.style.transform = 'scale(1)')));
+
+  const born = Date.now();
+  const waitUntil = born + Math.max(6000, settings.animationDurationMs * 2);
+  let finished = false;
+  const finish = (afterMs) => {
+    if (finished) return;
+    finished = true;
+    setTimeout(() => (box.style.opacity = '0'), afterMs);
+    setTimeout(() => {
+      box.remove();
+      const idx = activeItems.indexOf(box);
+      if (idx !== -1) activeItems.splice(idx, 1);
+    }, afterMs + 650);
+  };
+
+  const eat = (item) => {
+    const isBaby = item.dataset.emojiId === 'baby';
+    const w = takeOver(item, box);
+    const s = w.size;
+    // キノコの横(来た側)に、足元をそろえて立つ
+    const fromLeft = w.x + s / 2 < mx + mSize / 2;
+    const tx = fromLeft ? mx - s * 0.85 : mx + mSize - s * 0.15;
+    const ty = my + mSize - s;
+    // 🐈は左向きの絵文字なので、右を向く時は左右反転する
+    const flip = w.glyph.textContent === '🐈' && fromLeft ? 'scaleX(-1) ' : '';
+    w.el.style.transformOrigin = '50% 100%';
+    if (flip) w.el.style.transform = flip;
+    w.glyph.classList.add('hotel-hop');
+    const dist = Math.hypot(tx - w.x, ty - w.y);
+    const walkMs = Math.round(Math.min(1800, Math.max(500, dist * 1.8)));
+    w.el.style.transition = `left ${walkMs}ms ease-out, top ${walkMs}ms ease-out`;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      w.el.style.left = `${tx}px`;
+      w.el.style.top = `${ty}px`;
+    }));
+    // もぐもぐ食べる(キノコが3口で小さくなって消える)
+    const eatAt = walkMs + 80;
+    setTimeout(() => {
+      w.glyph.classList.remove('hotel-hop');
+      w.glyph.classList.add('mush-chew');
+      mush.style.transition = 'transform 150ms steps(1, end), opacity 200ms ease-in';
+      [0, 260, 520].forEach((t, i) => setTimeout(() => (mush.style.transform = `scale(${[0.72, 0.45, 0.2][i]})`), t));
+      setTimeout(() => (mush.style.opacity = '0'), 700);
+      // 食べかすがぽろぽろ落ちる
+      for (let i = 0; i < 3; i++) fx('🟤', s * 0.12, mx + mSize / 2, my + mSize * 0.6, (rand() - 0.5) * s * 0.4, s * 0.35, 150 + i * 260, 0.6);
+    }, eatAt);
+    const effect = isBaby ? 'grow' : plannedEffect;
+    const at = eatAt + 900;
+    const cx = tx + s / 2;
+    const cy = ty + s / 2;
+    setTimeout(() => {
+      w.glyph.classList.remove('mush-chew');
+      w.el.style.transition = 'transform 120ms steps(1, end)';
+      if (effect === 'grow') {
+        // パワーアップ: 大・小・大・小…とピカピカ切り替わって、最後に大きくなる
+        const big = 2.1;
+        [1.5, 1, 1.5, 1, 1.8, 1.2, big].forEach((k, i) => setTimeout(() => (w.el.style.transform = `${flip}scale(${k})`), i * 110));
+        for (let i = 0; i < 6; i++) fx('✨', s * 0.5, cx + (rand() - 0.5) * s * 2.4, cy - s * (0.4 + rand() * 1.6), 0, -s * 0.3, 800 + i * 120);
+        finish(2400);
+      } else if (effect === 'dead') {
+        // コテッと横に倒れて、💀になって、👻が昇っていく
+        w.el.dataset.noStar = '1';
+        w.el.style.transition = 'transform 380ms cubic-bezier(.5, 0, .8, .6)';
+        w.el.style.transform = `${flip}rotate(${fromLeft ? -90 : 90}deg)`;
+        setTimeout(() => {
+          fx('💨', s * 0.7, cx, cy, 0, -s * 0.2, 0, 1.4);
+          setGlyph(w.glyph, '💀');
+          w.el.style.filter = '';
+        }, 900);
+        fx('👻', s * 0.8, cx, cy - s * 0.4, 0, -s * 2.2, 1300, 1.2);
+        finish(3000);
+      } else if (effect === 'tasty') {
+        // めちゃくちゃうまい: 跳ねて、キラキラとハートが出て「うまーい!!」
+        w.glyph.classList.add('mush-joy');
+        // 目がハートになったように、顔の前に😍がぽんっと出る
+        fx('😍', s * 0.5, cx, ty - s * 0.25, 0, -s * 0.5, 0, 1.2);
+        const parts = ['✨', '💖', '✨', '💕', '✨', '💖', '🌟'];
+        parts.forEach((c, i) => {
+          const a = (i / parts.length) * Math.PI * 2;
+          fx(c, s * 0.45, cx, cy, Math.cos(a) * s * 1.4, Math.sin(a) * s * 1.2, 150 + i * 70);
+        });
+        fx('😭', s * 0.45, cx + s * 0.55, cy - s * 0.2, s * 0.3, s * 0.2, 500);
+        finish(2600);
+      } else if (effect === 'spicy') {
+        // めちゃくちゃ辛い: 真っ赤になって震えて、口から火を吹く
+        w.el.style.filter = 'sepia(1) saturate(7) hue-rotate(-28deg) brightness(0.95)';
+        w.glyph.classList.add('mush-shake');
+        const dir = fromLeft ? 1 : -1;
+        for (let i = 0; i < 8; i++) {
+          fx('🔥', s * (0.45 + i * 0.05), cx + dir * s * 0.45, cy + s * 0.1, dir * s * (1.8 + rand() * 0.8), (rand() - 0.5) * s * 0.6, 200 + i * 130, 1.5);
+        }
+        for (let i = 0; i < 3; i++) fx('💦', s * 0.35, cx - dir * s * 0.4, cy - s * 0.4, -dir * s * 0.6, -s * 0.5, 300 + i * 300);
+        finish(2600);
+      } else if (effect === 'tiny') {
+        // ちっちゃくなって、近い方の画面の端までちょこちょこ逃げていく
+        w.el.style.transition = 'transform 300ms steps(3, end)';
+        w.el.style.transform = `${flip}scale(0.38)`;
+        // 縮んだ瞬間に、あせった💦が飛ぶ
+        fx('💦', s * 0.3, cx + s * 0.2, cy, s * 0.4, -s * 0.4, 250);
+        setTimeout(() => {
+          const toRight = cx > vw / 2;
+          w.glyph.classList.add('hotel-hop');
+          w.el.style.transition = 'left 1300ms linear, transform 1ms';
+          w.el.style.left = `${toRight ? vw + s : -s * 2}px`;
+          if (w.glyph.textContent === '🐈') w.el.style.transform = `${toRight ? 'scaleX(-1) ' : ''}scale(0.38)`;
+        }, 650);
+        finish(2200);
+      } else {
+        // ワライタケ: 色がぐるぐる変わりながら回って、頭の周りを💫が回る
+        w.glyph.classList.add('mush-trippy');
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2;
+          fx('💫', s * 0.4, cx + Math.cos(a) * s * 0.7, ty + Math.sin(a) * s * 0.25, -Math.sin(a) * s * 0.5, Math.cos(a) * s * 0.2, i * 160);
+        }
+        finish(2800);
+      }
+    }, at);
+  };
+
+  // 生き物が来るのを待つ(0.3秒おきに見る)
+  const look = () => {
+    if (finished) return;
+    const now = Date.now();
+    if (now > waitUntil) {
+      finish(0);
+      return;
+    }
+    if (mush.dataset.starred) {
+      finish(0);
+      return;
+    }
+    const cx = mx + mSize / 2;
+    const cy = my + mSize / 2;
+    const eater = activeItems
+      .filter((o) => o !== box && o.isConnected && (o.dataset.creature || o.dataset.emojiId === 'baby') && !o.dataset.dating)
+      .map((o) => ({ o, r: rectOf(o) }))
+      .filter((c) => c.r.width > 0)
+      .sort((a, b) => Math.hypot(a.r.left - cx, a.r.top - cy) - Math.hypot(b.r.left - cx, b.r.top - cy))[0];
+    if (eater && now - born > 450) {
+      eater.o.dataset.dating = '1';
+      eat(eater.o);
+      return;
+    }
+    setTimeout(look, 300);
+  };
+  setTimeout(look, 450);
+}
+
+/**
+ * 🍎 りんご(たまに🍏): 画面のどこかに上から落ちてきて、着地したらコロコロ転がって止まる。
+ * 生き物のリアクション(emoji-set.jsでcreature:true。👶も)が画面にいれば、近い子が来て
+ * かじる。かじると、かじった跡の付いた白いりんご(あのマークのような形)に変わって、
+ * 光りながらゆっくり浮かんで回る。誰も来なければ、転がったまましばらくして消える。
+ * 落ちる場所・緑のりんごかどうかは、OBSと自分の画面で同じになるように種から決める。
+ */
+let appleStyleAdded = false;
+/**
+ * かじられた後のりんごの色(あのマークの歴代の色っぽく)。top・bottomは、りんごの絵の
+ * 上端・下端(px)。虹色の帯を絵の高さに合わせるために使う
+ */
+const APPLE_LOGO_STYLES = [
+  // 6色の虹の帯
+  (top, bottom) => {
+    const c = ['#61bb46', '#fdb827', '#f5821f', '#e03a3e', '#963d97', '#009ddc'];
+    const h = (bottom - top) / c.length;
+    const stops = c.map((col, i) => `${col} ${top + h * i}px ${top + h * (i + 1)}px`);
+    return `linear-gradient(to bottom, ${c[0]} 0 ${top}px, ${stops.join(', ')}, ${c[c.length - 1]} ${bottom}px)`;
+  },
+  // 黒一色
+  () => '#1d1d1f',
+  // 水色のつやつや
+  (top, bottom) => {
+    const h = bottom - top;
+    return `linear-gradient(to bottom, #eaf7ff ${top}px, #8fd0ff ${top + h * 0.3}px, #2a8fe0 ${top + h * 0.6}px, #0b4f9c ${bottom}px)`;
+  },
+  // 銀色の金属
+  () => 'linear-gradient(160deg, #ffffff 0%, #c9ced3 32%, #7d848b 50%, #eceff1 64%, #8b9197 100%)',
+  // 白一色
+  () => '#ffffff',
+];
+
+function spawnApple(opts) {
+  addMushroomStyle();
+  if (!appleStyleAdded) {
+    appleStyleAdded = true;
+    const st = document.createElement('style');
+    st.textContent = `
+      .apple-land { animation: apple-land 260ms ease-out; }
+      @keyframes apple-land { 0% { transform: scale(1.25, 0.75); } 60% { transform: scale(0.92, 1.08); } 100% { transform: scale(1, 1); } }
+      /* 絵文字の絵は文字の枠より少しはみ出すので、余白を足してから切り抜く(足さないと端が欠ける) */
+      .apple-bite {
+        padding: 0.4em;
+        margin: -0.4em;
+        line-height: normal;
+        -webkit-mask-image: radial-gradient(circle at calc(100% - 0.45em) 1.02em, transparent var(--br, 0em), #000 calc(var(--br, 0em) + 0.01em));
+        mask-image: radial-gradient(circle at calc(100% - 0.45em) 1.02em, transparent var(--br, 0em), #000 calc(var(--br, 0em) + 0.01em));
+      }
+      .apple-logo { animation: apple-logo 2400ms ease-in-out forwards; }
+      @keyframes apple-logo {
+        0% { transform: translateY(0) rotateY(0deg) scale(1); }
+        35% { transform: translateY(-35%) rotateY(180deg) scale(1.45); }
+        70% { transform: translateY(-45%) rotateY(360deg) scale(1.6); }
+        100% { transform: translateY(-45%) rotateY(360deg) scale(1.6); }
+      }
+      .apple-halo { border-radius: 50%; background: radial-gradient(circle, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0.35) 35%, rgba(255, 255, 255, 0) 70%); animation: apple-halo 2400ms ease-out forwards; }
+      @keyframes apple-halo { 0% { opacity: 0; transform: scale(0.3); } 40% { opacity: 1; transform: scale(1.6); } 100% { opacity: 0.6; transform: scale(2.2); } }
+    `;
+    document.head.appendChild(st);
+  }
+  const rnd = seededRandom(opts && opts.seed);
+  enforceMaxConcurrent();
+  const vw = stageW();
+  const vh = stageH();
+  const base = settings.baseSizePx;
+  const aSize = base * 0.8;
+  const margin = Math.min(base * 1.5, Math.min(vw, vh) * 0.2);
+  const green = rnd() < 0.3;
+  // かじられた後の色も、先に決めておく(OBSと自分の画面で同じ色に)
+  const logoStyle = APPLE_LOGO_STYLES[Math.floor(rnd() * APPLE_LOGO_STYLES.length)];
+
+  const box = document.createElement('div');
+  box.className = 'reaction-item apple-scene' + (opts && opts.mark ? ' self-mark' : '');
+  box.dataset.noChase = '1';
+  box.style.left = '0';
+  box.style.top = '0';
+  box.style.width = `${vw}px`;
+  box.style.height = `${vh}px`;
+  box.style.opacity = String(settings.glyphOpacity);
+  box.style.transition = 'opacity 600ms ease-in';
+  stage.appendChild(box);
+  activeItems.push(box);
+  const fx = (...a) => sceneFx(box, ...a);
+
+  // 着地する場所(画面の下の方)と、転がる向き・距離
+  const lx = margin + rnd() * Math.max(0, vw - aSize - margin * 2);
+  const ly = vh * 0.45 + rnd() * Math.max(0, vh * 0.5 - aSize - margin * 0.5);
+  const dir = rnd() < 0.5 ? -1 : 1;
+  const rollDist = aSize * (1 + rnd() * 1.5);
+  // 転がった後に止まる場所(画面の外に出ないように)
+  const ax = Math.max(margin * 0.5, Math.min(vw - aSize - margin * 0.5, lx + dir * rollDist));
+  const ay = ly;
+
+  const apple = document.createElement('span');
+  apple.className = 'hotel-part';
+  apple.dataset.prop = '1';
+  apple.style.left = `${lx}px`;
+  apple.style.top = `${-aSize * 1.5}px`;
+  apple.style.fontSize = `${aSize}px`;
+  apple.style.transformOrigin = '50% 50%';
+  const glyph = document.createElement('span');
+  glyph.className = 'reaction-glyph';
+  glyph.style.display = 'inline-block';
+  glyph.style.transformOrigin = '50% 100%';
+  glyph.textContent = green ? '🍏' : '🍎';
+  apple.appendChild(glyph);
+  box.appendChild(apple);
+
+  // 落ちる(だんだん速く)→着地してつぶれる→コロコロ転がって止まる
+  const fallMs = 650 + Math.round((ly / vh) * 300);
+  apple.style.transition = `top ${fallMs}ms cubic-bezier(.55, 0, 1, .45)`;
+  requestAnimationFrame(() => requestAnimationFrame(() => (apple.style.top = `${ly}px`)));
+  setTimeout(() => {
+    glyph.classList.add('apple-land');
+    const turns = (Math.abs(ax - lx) / (Math.PI * aSize)) * 360;
+    apple.style.transition = 'left 1000ms cubic-bezier(.2, .6, .35, 1), transform 1000ms cubic-bezier(.2, .6, .35, 1)';
+    apple.style.left = `${ax}px`;
+    apple.style.transform = `rotate(${dir * turns}deg)`;
+  }, fallMs);
+  const landedAt = fallMs + 1050;
+
+  const born = Date.now();
+  const waitUntil = born + landedAt + Math.max(6000, settings.animationDurationMs * 2);
+  let finished = false;
+  const finish = (afterMs) => {
+    if (finished) return;
+    finished = true;
+    setTimeout(() => (box.style.opacity = '0'), afterMs);
+    setTimeout(() => {
+      box.remove();
+      const idx = activeItems.indexOf(box);
+      if (idx !== -1) activeItems.splice(idx, 1);
+    }, afterMs + 650);
+  };
+
+  const eat = (item) => {
+    const w = takeOver(item, box);
+    const s = w.size;
+    // りんごの横(来た側)に、足元をそろえて立つ
+    const fromLeft = w.x + s / 2 < ax + aSize / 2;
+    const tx = fromLeft ? ax - s * 0.85 : ax + aSize - s * 0.15;
+    const ty = ay + aSize - s;
+    const flip = w.glyph.textContent === '🐈' && fromLeft ? 'scaleX(-1) ' : '';
+    w.el.style.transformOrigin = '50% 100%';
+    if (flip) w.el.style.transform = flip;
+    w.glyph.classList.add('hotel-hop');
+    const dist = Math.hypot(tx - w.x, ty - w.y);
+    const walkMs = Math.round(Math.min(1800, Math.max(500, dist * 1.8)));
+    w.el.style.transition = `left ${walkMs}ms ease-out, top ${walkMs}ms ease-out`;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      w.el.style.left = `${tx}px`;
+      w.el.style.top = `${ty}px`;
+    }));
+    // かじる(来た側がかじられて、跡が大きくなる)。転がった回転は戻して、まっすぐ立てる
+    const eatAt = walkMs + 80;
+    setTimeout(() => {
+      w.glyph.classList.remove('hotel-hop');
+      w.glyph.classList.add('mush-chew');
+      // かじり跡はいつも絵の右側に付けて、左から来た時は絵を左右反転する(跡が来た側に向く)
+      apple.style.transition = 'transform 200ms ease-out';
+      apple.style.transform = fromLeft ? 'rotate(0deg) scaleX(-1)' : 'rotate(0deg)';
+      glyph.classList.remove('apple-land');
+      glyph.classList.add('apple-bite');
+      [0, 280, 560].forEach((t, i) => setTimeout(() => glyph.style.setProperty('--br', ['0.12em', '0.17em', '0.2em'][i]), t));
+      // かじったかけらが飛ぶ
+      for (let i = 0; i < 3; i++) {
+        fx('✨', s * 0.18, fromLeft ? ax : ax + aSize, ay + aSize * 0.4, (fromLeft ? -1 : 1) * s * 0.3, -s * 0.2, 100 + i * 280, 0.6);
+      }
+    }, eatAt);
+    // あのマークのような、白く光るりんごに変わって、浮かびながらくるっと回る
+    const at = eatAt + 1000;
+    const cx = ax + aSize / 2;
+    const cy = ay + aSize / 2;
+    setTimeout(() => {
+      w.glyph.classList.remove('mush-chew');
+      w.glyph.classList.add('mush-joy');
+      // 後ろの光
+      const halo = document.createElement('span');
+      halo.className = 'hotel-part apple-halo';
+      const hs = aSize * 1.4;
+      halo.style.left = `${cx - hs / 2}px`;
+      halo.style.top = `${cy - hs / 2 - aSize * 0.4}px`;
+      halo.style.width = `${hs}px`;
+      halo.style.height = `${hs}px`;
+      box.insertBefore(halo, apple);
+      // 一瞬白く光ってから、かじり跡の付いたりんごの形を、歴代の色で塗ったものに変わる
+      glyph.style.transition = 'filter 250ms ease-in';
+      glyph.style.filter = 'brightness(0) invert(1)';
+      setTimeout(() => toLogo(glyph, logoStyle), 260);
+      apple.style.filter = 'drop-shadow(0 0 6px rgba(255, 255, 255, 0.9))';
+      apple.style.zIndex = '1';
+      apple.style.transition = '';
+      apple.style.perspective = '600px';
+      glyph.style.transformOrigin = '50% 50%';
+      glyph.classList.add('apple-logo');
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        fx('✨', aSize * 0.35, cx, cy - aSize * 0.4, Math.cos(a) * aSize * 1.3, Math.sin(a) * aSize * 1.1, 500 + i * 60);
+      }
+      finish(2900);
+    }, at);
+  };
+
+  // 着地してから、生き物が来るのを待つ(0.3秒おきに見る)
+  const look = () => {
+    if (finished) return;
+    if (Date.now() > waitUntil) {
+      finish(0);
+      return;
+    }
+    if (apple.dataset.starred) {
+      finish(0);
+      return;
+    }
+    const cx = ax + aSize / 2;
+    const cy = ay + aSize / 2;
+    const eater = activeItems
+      .filter((o) => o !== box && o.isConnected && (o.dataset.creature || o.dataset.emojiId === 'baby') && !o.dataset.dating)
+      .map((o) => ({ o, r: rectOf(o) }))
+      .filter((c) => c.r.width > 0)
+      .sort((a, b) => Math.hypot(a.r.left - cx, a.r.top - cy) - Math.hypot(b.r.left - cx, b.r.top - cy))[0];
+    if (eater) {
+      eater.o.dataset.dating = '1';
+      eat(eater.o);
+      return;
+    }
+    setTimeout(look, 300);
+  };
+  setTimeout(look, landedAt);
+}
+
+/**
+ * かじられたりんご(.apple-bite)を、同じ形の、色を塗った板に置き換える。絵文字は色を
+ * 変えられないので、絵文字を描いた絵(canvas)の形だけを切り抜きに使う(かじり跡も同じ
+ * 所を消す)。CSSのかじり跡(.apple-bite)と同じ位置・大きさ。
+ */
+function toLogo(glyph, logoStyle) {
+  const W = glyph.offsetWidth;
+  const H = glyph.offsetHeight;
+  const cs = getComputedStyle(glyph);
+  const fs = parseFloat(cs.fontSize);
+  const r = Number.parseFloat(glyph.style.getPropertyValue('--br')) || 0.2;
+  const k = 2;
+  const c = document.createElement('canvas');
+  c.width = Math.ceil(W * k);
+  c.height = Math.ceil(H * k);
+  const ctx = c.getContext('2d');
+  if (!ctx || !W || !H) return;
+  ctx.scale(k, k);
+  ctx.font = `${fs}px ${cs.fontFamily}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(glyph.textContent, W / 2, H / 2);
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.beginPath();
+  ctx.arc(W - 0.45 * fs, 1.02 * fs, r * fs, 0, Math.PI * 2);
+  ctx.fill();
+  const url = `url(${c.toDataURL()})`;
+  glyph.style.boxSizing = 'border-box';
+  glyph.style.width = `${W}px`;
+  glyph.style.height = `${H}px`;
+  glyph.textContent = '';
+  glyph.style.webkitMaskImage = url;
+  glyph.style.maskImage = url;
+  glyph.style.webkitMaskSize = '100% 100%';
+  glyph.style.maskSize = '100% 100%';
+  glyph.style.background = logoStyle(0.3 * fs, H - 0.3 * fs);
+  glyph.style.transition = 'filter 300ms ease-out';
+  glyph.style.filter = '';
+}
+
+/**
+ * ⭐ 流れ星: 画面の左上か右上から、ランダムな角度で、光の尾と星くずを引いて流れ星が
+ * 降ってくる。流れ星に触れた生き物(emoji-set.jsでcreature:true)は、しばらく虹色に
+ * 光る無敵の状態になって、画面のほかのリアクション(生き物以外も)に走っていき、体当たりで
+ * 倒す(倒されたものはひっくり返って、跳ねてから画面の下へ落ちる)。倒すたびに頭の上に
+ * 点数が出て(100→200→400→…→8000)、その後は1UPが続く。時間が来たら元に戻るので、
+ * 1UPまで行かないこともある。誰にも触れなければ、そのまま画面の外へ流れていく。
+ */
+let starStyleAdded = false;
+const STAR_SCORES = [100, 200, 400, 500, 800, 1000, 2000, 4000, 5000, 8000];
+/** 無敵の状態の長さ(最後の少しは、点滅がゆっくりになって終わりが近いのが分かる) */
+const STAR_POWER_MS = 8000;
+const STAR_POWER_ENDING_MS = 1800;
+/**
+ * 無敵の間の虹色の点滅(80msごと。終わりかけは225msごと)。CSSのアニメーションにすると、
+ * 動いている子に毎コマ色の変化をかけ直すので重かった。決まった刻みで中身の色だけ替える
+ */
+const STAR_POWER_COLORS = [
+  'brightness(1.3) drop-shadow(0 0 8px #ff5a5a)',
+  'brightness(1.5) hue-rotate(90deg) drop-shadow(0 0 8px #ffe14d)',
+  'brightness(1.3) hue-rotate(180deg) drop-shadow(0 0 8px #5aff8c)',
+  'brightness(1.5) hue-rotate(270deg) drop-shadow(0 0 8px #5ac8ff)',
+];
+/** 今無敵の子(ほかの流れ星の場面の子とぶつかったら、両方消える) */
+const STAR_POWERED = new Set();
+
+function addStarStyle() {
+  addMushroomStyle();
+  if (starStyleAdded) return;
+  starStyleAdded = true;
+  const st = document.createElement('style');
+  st.textContent = `
+    .star-head .gin { filter: drop-shadow(0 0 4px #ffffff) drop-shadow(0 0 10px #fff3a0) drop-shadow(0 0 20px #ffc93c); }
+    .star-spin { display: inline-block; animation: star-spin 900ms linear infinite; will-change: transform; }
+    @keyframes star-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    .star-tail {
+      position: absolute; height: 8px; margin-top: -4px; border-radius: 4px; transform-origin: 0 50%;
+      background: linear-gradient(to right, rgba(255, 255, 240, 0.95), rgba(255, 220, 110, 0.7) 18%, rgba(150, 190, 255, 0.35) 55%, rgba(150, 190, 255, 0));
+      filter: blur(1.5px);
+    }
+    /* 毎コマ動かすものは、それぞれ別の層にする(動かすたびに周りまで描き直さないように) */
+    .star-head, .star-tail, .star-power { will-change: transform; }
+    .star-boom {
+      position: absolute; border-radius: 50%; z-index: 4;
+      background: radial-gradient(circle, #ffffff 0%, rgba(255, 250, 200, 0.95) 25%, rgba(255, 170, 255, 0.5) 50%, rgba(120, 200, 255, 0) 72%);
+      animation: star-boom 750ms ease-out forwards;
+    }
+    @keyframes star-boom { 0% { opacity: 0; transform: scale(0.2); } 15% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(2.4); } }
+    .star-ring {
+      position: absolute; border-radius: 50%; z-index: 4; border: 4px solid rgba(255, 255, 255, 0.9);
+      box-shadow: 0 0 14px #ffffff, inset 0 0 14px #b8e0ff;
+      animation: star-ring 800ms ease-out forwards;
+    }
+    @keyframes star-ring { 0% { opacity: 1; transform: scale(0.1); } 100% { opacity: 0; transform: scale(3.2); } }
+    .star-run { display: inline-block; animation: star-run 150ms ease-in-out infinite alternate; }
+    @keyframes star-run { from { transform: translateY(0) rotate(-6deg); } to { transform: translateY(-14%) rotate(6deg); } }
+    .star-ghost { animation: star-ghost 520ms ease-out forwards; }
+    @keyframes star-ghost { from { opacity: 0.55; } to { opacity: 0; } }
+    .star-score {
+      position: absolute; white-space: nowrap; font-weight: 900; color: #ffffff; letter-spacing: 0.02em;
+      font-family: "Arial Black", "Segoe UI", sans-serif;
+      text-shadow: 0 0 2px #000, 2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+      animation: star-score 1000ms ease-out forwards;
+    }
+    .star-score.oneup { color: #6dff6d; }
+    @keyframes star-score {
+      0% { opacity: 0; transform: translate(-50%, 0) scale(0.6); }
+      15% { opacity: 1; transform: translate(-50%, -20%) scale(1.1); }
+      70% { opacity: 1; transform: translate(-50%, -90%) scale(1); }
+      100% { opacity: 0; transform: translate(-50%, -130%) scale(1); }
+    }
+  `;
+  document.head.appendChild(st);
+}
+
+/**
+ * 星くず(光る小さな粒)は、1枚のcanvasにまとめて描く。1粒ずつ要素にしてぼかした影を付けて
+ * いた時は、⭐をたくさん出すとOBSのCPUがとても重くなっていた(粒の数だけ描き直していた)。
+ * 見た目は前と同じ: 光る丸が、ease-outで(dx, dy)だけ動きながら、小さく薄くなって消える
+ */
+const dustLayer = { canvas: null, ctx: null, list: [], sprites: new Map(), running: false, w: 0, h: 0, k: 1 };
+const DUST_SPRITE_R = 16;
+const DUST_SPRITE_PAD = 52;
+/** 色ごとの光る丸の絵(芯の直径32pxに、その1.5倍のぼかしの光) */
+function dustSprite(color) {
+  let c = dustLayer.sprites.get(color);
+  if (c) return c;
+  c = document.createElement('canvas');
+  c.width = c.height = (DUST_SPRITE_R + DUST_SPRITE_PAD) * 2;
+  const g = c.getContext('2d');
+  g.fillStyle = color;
+  g.shadowColor = color;
+  g.shadowBlur = DUST_SPRITE_R * 2 * 1.5;
+  g.beginPath();
+  g.arc(c.width / 2, c.height / 2, DUST_SPRITE_R, 0, Math.PI * 2);
+  g.fill();
+  dustLayer.sprites.set(color, c);
+  return c;
+}
+function addDust(cx, cy, size, color, dx, dy, life) {
+  if (!dustLayer.canvas) {
+    const cv = document.createElement('canvas');
+    cv.className = 'dust-layer';
+    cv.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;z-index:5;';
+    dustLayer.canvas = cv;
+    dustLayer.ctx = cv.getContext('2d');
+  }
+  if (!dustLayer.canvas.isConnected) stage.appendChild(dustLayer.canvas);
+  dustLayer.list.push({ cx, cy, size, img: dustSprite(color), dx, dy, life, born: performance.now() });
+  if (!dustLayer.running) {
+    dustLayer.running = true;
+    requestAnimationFrame(drawDust);
+  }
+}
+/** CSSのease-out(cubic-bezier(0, 0, 0.58, 1))と同じ進み方(最初に表にしておく) */
+const EASE_OUT_TABLE = (() => {
+  const t = new Float32Array(257);
+  for (let i = 0; i <= 256; i++) {
+    const p = i / 256;
+    // x(u) = 3(1-u)u²·0.58 + u³ が p になる u を二分法で求めて、y(u) = 3(1-u)u² + u³
+    let lo = 0;
+    let hi = 1;
+    for (let k = 0; k < 20; k++) {
+      const u = (lo + hi) / 2;
+      if (3 * (1 - u) * u * u * 0.58 + u * u * u < p) lo = u;
+      else hi = u;
+    }
+    const u = (lo + hi) / 2;
+    t[i] = 3 * (1 - u) * u * u + u * u * u;
+  }
+  return t;
+})();
+function easeOut(p) {
+  return EASE_OUT_TABLE[Math.round(Math.min(1, Math.max(0, p)) * 256)];
+}
+function drawDust(now) {
+  const L = dustLayer;
+  const cv = L.canvas;
+  // 縮めて映しているOBSでは、映る大きさで描く(無駄に大きく描かない)
+  // 星くずはぼんやり光る粒なので、半分の細かさで描いて引き伸ばしても見た目は変わらない
+  // (画面全体の大きさで毎コマ描くと重い。描く量は1/4になる)
+  const k = view.k * (window.devicePixelRatio || 1) * 0.5;
+  const w = stageW();
+  const h = stageH();
+  if (L.w !== w || L.h !== h || L.k !== k) {
+    L.w = w;
+    L.h = h;
+    L.k = k;
+    cv.width = Math.max(1, Math.round(w * k));
+    cv.height = Math.max(1, Math.round(h * k));
+    cv.style.width = `${w}px`;
+    cv.style.height = `${h}px`;
+  }
+  const g = L.ctx;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, cv.width, cv.height);
+  g.setTransform(k, 0, 0, k, 0, 0);
+  const t = performance.now();
+  const full = (DUST_SPRITE_R + DUST_SPRITE_PAD) / DUST_SPRITE_R;
+  for (let i = L.list.length - 1; i >= 0; i--) {
+    const d = L.list[i];
+    const p = (t - d.born) / d.life;
+    if (p >= 1) {
+      L.list.splice(i, 1);
+      continue;
+    }
+    const e = easeOut(Math.max(0, p));
+    const r = (d.size / 2) * (1 - 0.8 * e) * full;
+    g.globalAlpha = (1 - e) * settings.glyphOpacity;
+    g.drawImage(d.img, d.cx + d.dx * e - r, d.cy + d.dy * e - r, r * 2, r * 2);
+  }
+  g.globalAlpha = 1;
+  if (L.list.length) {
+    requestAnimationFrame(drawDust);
+  } else {
+    L.running = false;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, cv.width, cv.height);
+  }
+}
+
+/** 場面の中の生き物・置いてある物が、今見えているか */
+function sceneVisible(el) {
+  if (el.style.visibility === 'hidden' || el.closest('[style*="visibility: hidden"]')) return false;
+  return Number(getComputedStyle(el).opacity) > 0.3;
+}
+
+function spawnStar(opts) {
+  addStarStyle();
+  // 降ってくる場所・角度は、OBSと自分の画面で同じになるように種から決める
+  const rnd = seededRandom(opts && opts.seed);
+  enforceMaxConcurrent();
+  const vw = stageW();
+  const vh = stageH();
+  const base = settings.baseSizePx;
+  const sSize = base * 0.9;
+
+  const box = document.createElement('div');
+  box.className = 'reaction-item star-scene' + (opts && opts.mark ? ' self-mark' : '');
+  box.dataset.noChase = '1';
+  box.style.left = '0';
+  box.style.top = '0';
+  box.style.width = `${vw}px`;
+  box.style.height = `${vh}px`;
+  box.style.opacity = String(settings.glyphOpacity);
+  box.style.transition = 'opacity 600ms ease-in';
+  stage.appendChild(box);
+  activeItems.push(box);
+
+  let finished = false;
+  const finish = (afterMs) => {
+    if (finished) return;
+    finished = true;
+    setTimeout(() => (box.style.opacity = '0'), afterMs);
+    setTimeout(() => {
+      box.remove();
+      const idx = activeItems.indexOf(box);
+      if (idx !== -1) activeItems.splice(idx, 1);
+    }, afterMs + 650);
+  };
+
+  /** 消えていく光の粒(星くず)。cx, cyが真ん中 */
+  const dust = (cx, cy, size, color, dx, dy, life) => addDust(cx, cy, size, color, dx, dy, life);
+  const DUST_COLORS = ['#ffffff', '#fff6b0', '#ffd75a', '#b9d4ff', '#ffe9fb'];
+
+  // ---- 流れ星 ----
+  const fromLeft = rnd() < 0.5;
+  const dir = fromLeft ? 1 : -1;
+  // 角度(横から下向きに25〜60度)と、出てくる場所(左上・右上のあたり。画面の少し外から)
+  const angle = ((25 + rnd() * 35) * Math.PI) / 180;
+  let x;
+  let y;
+  if (rnd() < 0.6) {
+    x = fromLeft ? rnd() * vw * 0.45 : vw - rnd() * vw * 0.45;
+    y = -sSize;
+  } else {
+    x = fromLeft ? -sSize : vw + sSize;
+    y = rnd() * vh * 0.35;
+  }
+  const vx = Math.cos(angle) * dir;
+  const vy = Math.sin(angle);
+  // 画面を横切るのに1.6秒くらい
+  const speed = Math.max(vw, vh) * 0.65;
+  const tailLen = sSize * 6;
+  const tailDeg = (Math.atan2(-vy, -vx) * 180) / Math.PI;
+
+  const tail = document.createElement('span');
+  tail.className = 'hotel-part star-tail';
+  tail.style.width = `${tailLen}px`;
+  // 最初から出てくる場所に置いておく(置く前の一瞬、左上に光る星と尾が見えていた)
+  tail.style.left = `${x}px`;
+  tail.style.top = `${y}px`;
+  tail.style.transform = `rotate(${tailDeg}deg)`;
+  box.appendChild(tail);
+  const star = document.createElement('span');
+  star.className = 'hotel-part star-head';
+  star.style.fontSize = `${sSize}px`;
+  star.style.zIndex = '2';
+  star.style.left = `${x - sSize / 2}px`;
+  star.style.top = `${y - sSize / 2}px`;
+  const starGlyph = document.createElement('span');
+  starGlyph.className = 'reaction-glyph star-spin';
+  setGlyph(starGlyph, '⭐');
+  star.appendChild(starGlyph);
+  box.appendChild(star);
+
+  // ---- 無敵になった生き物 ----
+  // sourceがリアクション(activeItemsの1つ)ならそのまま連れてくる。ほかの場面(🕶️・🍄など)の
+  // 途中の生き物なら、今の見た目(グラサン・大きさ・色など)のまま写し取って連れてくる
+  // (元の場面のものは見えなくして、その場面はそのまま裏で終わらせる)
+  const powerUp = (source, isItem, startT) => {
+    let body;
+    let r0;
+    if (isItem) {
+      const w = takeOver(source, box);
+      body = w.el;
+      r0 = rectOf(body);
+    } else {
+      r0 = rectOf(source);
+      body = source.cloneNode(true);
+      source.dataset.starred = '1';
+      source.style.visibility = 'hidden';
+      const g = body.querySelector('.reaction-glyph');
+      if (g) g.classList.remove('hotel-hop', 'mush-chew', 'star-run');
+    }
+    body.dataset.starred = '1';
+    const baseFilter = body.style.filter || '';
+    let colorIdx = -1;
+    body.style.transition = 'none';
+    body.style.position = 'relative';
+    body.style.left = '0';
+    body.style.top = '0';
+    body.style.visibility = '';
+    const holder = document.createElement('span');
+    holder.className = 'hotel-part star-power';
+    holder.style.zIndex = '1';
+    const hopper = document.createElement('span');
+    hopper.className = 'star-run';
+    hopper.appendChild(body);
+    holder.appendChild(hopper);
+    box.appendChild(holder);
+    // 写し取る前と同じ所に見えるように置く(元の大きさ・向きの変化も含めて)
+    let px = r0.left;
+    let py = r0.top;
+    holder.style.left = `${px}px`;
+    holder.style.top = `${py}px`;
+    const r1 = rectOf(body);
+    px += r0.left - r1.left;
+    py += r0.top - r1.top;
+    holder.style.left = `${px}px`;
+    holder.style.top = `${py}px`;
+    const s = Math.max(base * 0.4, r0.width || base);
+    const glyph = body.querySelector('.reaction-glyph');
+    const char = glyph ? glyph.textContent : '';
+    const cat = char === '🐈' && !body.style.transform;
+
+    let target = null;
+    let wander = null;
+    let kills = 0;
+    const runSpeed = Math.max(vw, vh) * 0.45;
+    const endAt = startT + STAR_POWER_MS;
+    let lastGhost = 0;
+    let goneAt = 0;
+    const falling = [];
+    const center = () => {
+      const r = rectOf(body);
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, r: Math.max(r.width, r.height) / 2 };
+    };
+
+    // 無敵同士がぶつかったら、光って両方とも消える
+    const me = {
+      gone: false,
+      center,
+      vanish(t) {
+        if (me.gone) return;
+        me.gone = true;
+        goneAt = t;
+        STAR_POWERED.delete(me);
+        holder.classList.remove('star-power', 'ending');
+        hopper.classList.remove('star-run');
+        body.style.filter = baseFilter;
+        holder.style.transition = 'transform 650ms cubic-bezier(.5, 0, .9, .4), opacity 650ms ease-in';
+        holder.style.transformOrigin = '50% 50%';
+        holder.style.filter = 'brightness(3) drop-shadow(0 0 12px #ffffff)';
+        holder.style.transform = 'rotate(540deg) scale(0)';
+        holder.style.opacity = '0';
+      },
+    };
+    STAR_POWERED.add(me);
+    const boom = (cx, cy, size) => {
+      const flash = document.createElement('span');
+      flash.className = 'star-boom';
+      flash.style.left = `${cx - size}px`;
+      flash.style.top = `${cy - size}px`;
+      flash.style.width = `${size * 2}px`;
+      flash.style.height = `${size * 2}px`;
+      box.appendChild(flash);
+      const ring = document.createElement('span');
+      ring.className = 'star-ring';
+      ring.style.left = `${cx - size}px`;
+      ring.style.top = `${cy - size}px`;
+      ring.style.width = `${size * 2}px`;
+      ring.style.height = `${size * 2}px`;
+      box.appendChild(ring);
+      setTimeout(() => {
+        flash.remove();
+        ring.remove();
+      }, 1000);
+      for (let i = 0; i < 24; i++) {
+        const a = (i / 24) * Math.PI * 2;
+        const d = size * (1.2 + Math.random() * 1.2);
+        dust(cx, cy, 3 + Math.random() * 6, `hsl(${(i * 15) % 360}, 100%, 75%)`, Math.cos(a) * d, Math.sin(a) * d, 900 + Math.random() * 400);
+      }
+    };
+
+    // 倒されたものは、ひっくり返って少し跳ねてから、画面の下へ落ちていく。場面の生き物・
+    // 置いてある物(🏩🍄など)は、今の見た目を写し取って落とす(元のものは見えなくする)
+    const knockOut = (t, awayDir) => {
+      let el;
+      let r0;
+      if (t.isItem) {
+        r0 = rectOf(t.el);
+        const d = takeOver(t.el, box);
+        el = d.el;
+      } else {
+        r0 = rectOf(t.el);
+        const copy = t.el.cloneNode(true);
+        t.el.dataset.starred = '1';
+        t.el.style.visibility = 'hidden';
+        copy.style.transition = 'none';
+        copy.style.position = 'relative';
+        copy.style.left = '0';
+        copy.style.top = '0';
+        copy.style.opacity = '1';
+        el = document.createElement('span');
+        el.className = 'hotel-part';
+        el.appendChild(copy);
+        box.appendChild(el);
+        el.style.left = `${r0.left}px`;
+        el.style.top = `${r0.top}px`;
+        const r1 = rectOf(copy);
+        el.style.left = `${r0.left + (r0.left - r1.left)}px`;
+        el.style.top = `${r0.top + (r0.top - r1.top)}px`;
+      }
+      el.style.zIndex = '1';
+      el.style.willChange = 'transform';
+      el.dataset.starred = '1';
+      el.style.transformOrigin = '50% 50%';
+      el.style.transform = 'scaleY(-1)';
+      const fx0 = parseFloat(el.style.left) || r0.left;
+      const fy0 = parseFloat(el.style.top) || r0.top;
+      // 画面の下に消えきるまで落とす(大きい物は少し余分に)
+      const size = (Math.max(r0.width, r0.height) || s) * 1.5;
+      falling.push({ el, x: fx0, y: fy0, vx: awayDir * base * 2.5, vy: -base * 9, size });
+      const cx = r0.left + r0.width / 2;
+      const cy = r0.top + r0.height / 2;
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        dust(cx, cy, 4 + Math.random() * 4, DUST_COLORS[i % DUST_COLORS.length], Math.cos(a) * s * 0.8, Math.sin(a) * s * 0.8, 500);
+      }
+    };
+    // 頭の上に点数(10回目からは1UP)
+    const score = () => {
+      const label = kills < STAR_SCORES.length ? String(STAR_SCORES[kills]) : '1UP';
+      const c = center();
+      const p = document.createElement('span');
+      p.className = 'star-score' + (label === '1UP' ? ' oneup' : '');
+      p.textContent = label;
+      p.style.left = `${c.x}px`;
+      p.style.top = `${c.y - c.r - s * 0.45}px`;
+      p.style.fontSize = `${Math.max(14, s * 0.42)}px`;
+      p.style.zIndex = '3';
+      box.appendChild(p);
+      setTimeout(() => p.remove(), 1100);
+      kills += 1;
+    };
+    // 倒しに行く相手: 一番近いもの。リアクション(生き物以外も)と、ほかの場面の生き物・
+    // 置いてある物(🏩🍄🍎🕶️)。👶は倒さない。ほかの無敵の子は、ぶつかると両方消える
+    const alive = (t) =>
+      t.el.isConnected && (t.isItem ? !t.el.dataset.dating : !t.el.dataset.starred && sceneVisible(t.el));
+    const pickTarget = () => {
+      const c0 = center();
+      const items = activeItems
+        .filter((o) => o !== box && o.isConnected && !o.dataset.noChase && !o.dataset.dating && !o.dataset.starred && o.dataset.emojiId !== 'baby')
+        // 🌈は絵文字1つではないので、場面の物と同じく見た目ごと写し取って倒す
+        .map((o) => ({ el: o, isItem: !o.classList.contains('rainbow-item') }));
+      const scene = Array.from(stage.querySelectorAll('[data-actor], [data-prop]'))
+        .filter((o) => !box.contains(o) && o.dataset.emojiId !== 'baby' && !o.closest('.star-scene'))
+        .map((o) => ({ el: o, isItem: false }))
+        .filter(alive);
+      return items
+        .concat(scene)
+        .map((t) => ({ t, r: rectOf(t.el) }))
+        .filter((c) => c.r.width > 0 && c.r.right > 0 && c.r.left < vw && c.r.bottom > 0 && c.r.top < vh)
+        .sort((a, b) => Math.hypot(a.r.left + a.r.width / 2 - c0.x, a.r.top + a.r.height / 2 - c0.y) - Math.hypot(b.r.left + b.r.width / 2 - c0.x, b.r.top + b.r.height / 2 - c0.y))[0];
+    };
+
+    const run = (now, dt) => {
+      if (!box.isConnected) {
+        STAR_POWERED.delete(me);
+        return false;
+      }
+      // 倒されたものを落とす
+      for (let i = falling.length - 1; i >= 0; i--) {
+        const f = falling[i];
+        f.vy += base * 28 * dt;
+        f.x += f.vx * dt;
+        f.y += f.vy * dt;
+        f.el.style.left = `${f.x}px`;
+        f.el.style.top = `${f.y}px`;
+        if (f.y > vh + f.size) {
+          f.el.remove();
+          falling.splice(i, 1);
+        }
+      }
+      if (me.gone) {
+        // ぶつかって消えた: 倒したものが落ちきってから終わる
+        if (falling.length || now - goneAt < 700) return true;
+        finish(0);
+        return false;
+      }
+      if (now >= endAt) {
+        // 時間切れ: 元に戻る(倒したものが落ちきるのを待ってから消える)
+        STAR_POWERED.delete(me);
+        holder.classList.remove('star-power', 'ending');
+        hopper.classList.remove('star-run');
+        hopper.classList.add('hotel-hop');
+        body.style.filter = baseFilter;
+        if (falling.length) return true;
+        finish(900);
+        return false;
+      }
+      {
+        const ending = endAt - now < STAR_POWER_ENDING_MS;
+        const idx = Math.floor((now - startT) / (ending ? 225 : 80)) % STAR_POWER_COLORS.length;
+        if (idx !== colorIdx) {
+          colorIdx = idx;
+          body.style.filter = `${baseFilter} ${STAR_POWER_COLORS[idx]}`;
+        }
+      }
+
+      // ほかの無敵の子とぶつかったら、両方消える
+      const c0 = center();
+      for (const other of STAR_POWERED) {
+        if (other === me || other.gone) continue;
+        const c1 = other.center();
+        if (Math.hypot(c1.x - c0.x, c1.y - c0.y) < (c0.r + c1.r) * 0.8) {
+          boom((c0.x + c1.x) / 2, (c0.y + c1.y) / 2, Math.max(c0.r, c1.r) * 1.6);
+          other.vanish(now);
+          me.vanish(now);
+          return true;
+        }
+      }
+
+      if (!target || !alive(target)) {
+        const c = pickTarget();
+        target = c ? c.t : null;
+      }
+      let tx;
+      let ty;
+      if (target) {
+        const r = rectOf(target.el);
+        tx = px + (r.left + r.width / 2 - c0.x);
+        ty = py + (r.top + r.height / 2 - c0.y);
+        wander = null;
+      } else {
+        // 誰もいない間は、画面の中を走り回る
+        if (!wander || Math.hypot(wander.x - px, wander.y - py) < s * 0.5) {
+          wander = { x: s + rnd() * Math.max(0, vw - s * 3), y: vh * 0.3 + rnd() * Math.max(0, vh * 0.6 - s * 1.5) };
+        }
+        tx = wander.x;
+        ty = wander.y;
+      }
+      const dx = tx - px;
+      const dy = ty - py;
+      const dist = Math.hypot(dx, dy);
+      const step = Math.min(dist, runSpeed * dt);
+      if (dist > 0) {
+        px += (dx / dist) * step;
+        py += (dy / dist) * step;
+      }
+      // 画面の外に出ないように(見えている絵の位置で確かめる)
+      px += Math.max(0, -(c0.x - c0.r)) - Math.max(0, c0.x + c0.r - vw);
+      py += Math.max(0, -(c0.y - c0.r)) - Math.max(0, c0.y + c0.r - vh);
+      holder.style.left = `${px}px`;
+      holder.style.top = `${py}px`;
+      if (cat && Math.abs(dx) > 1) holder.style.transform = dx > 0 ? 'scaleX(-1)' : '';
+      // 走った跡: 虹色の残像と光の粒
+      if (now - lastGhost > 100 && step > 0.5) {
+        lastGhost = now;
+        // 残像は止まった写し。色の変化は中にかけて、薄くなる動きだけ外側で
+        // (動いている要素に色の変化をかけると、消えるまで毎コマ描き直すので重かった)
+        const g = document.createElement('span');
+        g.className = 'star-ghost';
+        g.style.position = 'absolute';
+        g.style.left = `${px}px`;
+        g.style.top = `${py}px`;
+        if (holder.style.transform) g.style.transform = holder.style.transform;
+        const copy = body.cloneNode(true);
+        copy.style.animation = 'none';
+        copy.querySelectorAll('*').forEach((e) => (e.style.animation = 'none'));
+        copy.style.filter = `${baseFilter} hue-rotate(${Math.round(now / 3) % 360}deg) brightness(1.3)`;
+        g.appendChild(copy);
+        box.insertBefore(g, holder);
+        setTimeout(() => g.remove(), 560);
+        dust(c0.x, c0.y + c0.r * 0.7, 3 + Math.random() * 4, `hsl(${Math.round(now / 30) * 15 % 360}, 100%, 70%)`, (-dx / (dist || 1)) * s * 0.4, -s * 0.2, 600);
+      }
+      // 触れたら倒す
+      if (target) {
+        const r = rectOf(target.el);
+        if (Math.hypot(r.left + r.width / 2 - c0.x, r.top + r.height / 2 - c0.y) < c0.r + Math.min(r.width, r.height) * 0.4) {
+          if (target.isItem) target.el.dataset.dating = '1';
+          knockOut(target, r.left + r.width / 2 >= c0.x ? 1 : -1);
+          score();
+          target = null;
+        }
+      }
+      return true;
+    };
+    simAdd(startT + SIM_STEP_MS, run);
+  };
+
+  let lastDust = 0;
+  const startAt = opts && typeof opts.at === 'number' && Math.abs(opts.at - Date.now()) < 3000 ? opts.at : Date.now();
+  const fly = (now, dt) => {
+    if (finished || !star.isConnected) return false;
+    x += vx * speed * dt;
+    y += vy * speed * dt;
+    star.style.left = `${x - sSize / 2}px`;
+    star.style.top = `${y - sSize / 2}px`;
+    tail.style.left = `${x}px`;
+    tail.style.top = `${y}px`;
+    tail.style.transform = `rotate(${tailDeg}deg)`;
+    // 通った跡に、きらきらした星くずを残す
+    if (now - lastDust > 36) {
+      lastDust = now;
+      for (let i = 0; i < 2; i++) {
+        dust(
+          x - vx * sSize * 0.3 + (Math.random() - 0.5) * sSize * 0.4,
+          y - vy * sSize * 0.3 + (Math.random() - 0.5) * sSize * 0.4,
+          2 + Math.random() * sSize * 0.12,
+          DUST_COLORS[Math.floor(Math.random() * DUST_COLORS.length)],
+          (Math.random() - 0.5) * sSize * 0.6,
+          sSize * (0.2 + Math.random() * 0.6),
+          700 + Math.random() * 600,
+        );
+      }
+    }
+    // 生き物に触れたら、その子が無敵になる(🕶️・🍄などの場面の途中の生き物も、その姿のまま)
+    const touches = (r) => r.width > 0 && Math.hypot(r.left + r.width / 2 - x, r.top + r.height / 2 - y) < sSize * 0.5 + r.width * 0.45;
+    // (毎刻み、星の数だけ確かめるので、安い確かめ方から順に。見えているかは触れている子だけ)
+    let hit = null;
+    for (const o of activeItems) {
+      if (o !== box && (o.dataset.creature || o.dataset.emojiId === 'baby') && !o.dataset.dating && o.isConnected && touches(rectOf(o))) {
+        hit = { o, isItem: true };
+        break;
+      }
+    }
+    if (!hit) {
+      for (const o of stage.querySelectorAll('[data-actor][data-creature]')) {
+        if (!o.dataset.starred && !o.dataset.noStar && !box.contains(o) && touches(rectOf(o)) && sceneVisible(o)) {
+          hit = { o, isItem: false };
+          break;
+        }
+      }
+    }
+    if (hit) {
+      if (hit.isItem) hit.o.dataset.dating = '1';
+      star.remove();
+      tail.remove();
+      for (let i = 0; i < 14; i++) {
+        const a = (i / 14) * Math.PI * 2;
+        dust(x, y, 3 + Math.random() * 5, DUST_COLORS[i % DUST_COLORS.length], Math.cos(a) * sSize * 1.6, Math.sin(a) * sSize * 1.6, 800);
+      }
+      powerUp(hit.o, hit.isItem, now);
+      return false;
+    }
+    // 画面の外まで流れたら終わり
+    if (x < -tailLen || x > vw + tailLen || y > vh + sSize) {
+      finish(0);
+      return false;
+    }
+    return true;
+  };
+  simAdd(startAt, fly);
+}
+
+// ⚡ 雷: 画面の上のどこかから、⚡が1つ、カクカクと左右に折れ曲がりながら下まで落ちていく。
+// 光らせたり画面をピカッとさせたりはしない(画面がうるさくなるので)。
+// ⚡に触れた生き物は、ブルブル震えながら骨(💀)と交互になってしびれ、黒こげになって
+// 煙を出して消える。当たらなければ、そのまま消えるだけ。👶と、⭐で無敵の子はしびれない
+let thunderStyleAdded = false;
+const ZAP_MS = 1100;
+
+function addThunderStyle() {
+  addHotelStyle();
+  if (thunderStyleAdded) return;
+  thunderStyleAdded = true;
+  const st = document.createElement('style');
+  st.textContent = `
+    .zap-shake { animation: zap-shake 60ms linear infinite; }
+    @keyframes zap-shake {
+      0% { transform: translate(0, 0); } 25% { transform: translate(-5%, 3%); } 50% { transform: translate(4%, -3%); }
+      75% { transform: translate(-3%, -4%); } 100% { transform: translate(0, 0); }
+    }
+    .zap-body { animation: zap-body 180ms steps(1) infinite; }
+    @keyframes zap-body { 0% { opacity: 1; } 50% { opacity: 0; } }
+    .zap-xray {
+      position: absolute; left: 0; top: 0; width: 100%; text-align: center; line-height: 1;
+      animation: zap-xray 180ms steps(1) infinite;
+    }
+    @keyframes zap-xray { 0% { opacity: 0; } 50% { opacity: 1; } }
+    .zap-bit { position: absolute; }
+    .zap-smoke { position: absolute; animation: zap-smoke 1100ms ease-out forwards; }
+    @keyframes zap-smoke {
+      0% { opacity: 0; transform: translate(0, 0) scale(0.6); } 20% { opacity: 0.9; }
+      100% { opacity: 0; transform: translate(var(--dx, 0px), -120%) scale(1.4); }
+    }
+  `;
+  document.head.appendChild(st);
+}
+
+function spawnThunder(opts) {
+  addThunderStyle();
+  // 落ちる場所・形は、OBSと自分の画面で同じになるように種から決める
+  const rnd = seededRandom(opts && opts.seed);
+  enforceMaxConcurrent();
+  const vw = stageW();
+  const vh = stageH();
+  const base = settings.baseSizePx;
+
+  const box = document.createElement('div');
+  box.className = 'reaction-item thunder-scene' + (opts && opts.mark ? ' self-mark' : '');
+  box.dataset.noChase = '1';
+  box.style.left = '0';
+  box.style.top = '0';
+  box.style.width = `${vw}px`;
+  box.style.height = `${vh}px`;
+  box.style.opacity = String(settings.glyphOpacity);
+  box.style.transition = 'opacity 500ms ease-in';
+  stage.appendChild(box);
+  activeItems.push(box);
+  let finished = false;
+  const finish = (afterMs) => {
+    if (finished) return;
+    finished = true;
+    setTimeout(() => (box.style.opacity = '0'), afterMs);
+    setTimeout(() => {
+      box.remove();
+      const idx = activeItems.indexOf(box);
+      if (idx !== -1) activeItems.splice(idx, 1);
+    }, afterMs + 550);
+  };
+
+  // ---- ⚡の通り道: 左右に大きく折れ曲がりながら、上から下へ ----
+  const x0 = vw * (0.1 + rnd() * 0.8);
+  const n = 5 + Math.floor(rnd() * 3);
+  const amp = base * (1.0 + rnd() * 0.6);
+  const side = rnd() < 0.5 ? -1 : 1;
+  const hSize = base * 1.4;
+  const pts = [[x0, -hSize * 0.6]];
+  for (let i = 1; i <= n; i++) {
+    const zig = (i % 2 ? 1 : -1) * side * amp * (0.7 + rnd() * 0.6);
+    const x = Math.max(hSize, Math.min(vw - hSize, x0 + zig + (rnd() - 0.5) * base * 0.6));
+    const y = i === n ? vh - hSize * 0.5 : (vh * (i - 0.2 + rnd() * 0.4)) / n;
+    pts.push([x, y]);
+  }
+  const tip = pts[pts.length - 1];
+  // カクカク: 折れ目ごとに一瞬止まって、次の折れ目までシュッと動く
+  const MOVE_MS = 75;
+  const PAUSE_MS = 55;
+  const fallMs = n * (MOVE_MS + PAUSE_MS);
+  /** 落ち始めからt ms後の⚡の真ん中 */
+  const posAt = (t) => {
+    const i = Math.min(n - 1, Math.floor(t / (MOVE_MS + PAUSE_MS)));
+    const u = Math.min(1, Math.max(0, (t - i * (MOVE_MS + PAUSE_MS)) / MOVE_MS));
+    const [ax, ay] = pts[i];
+    const [bx, by] = pts[i + 1];
+    return [ax + (bx - ax) * u, ay + (by - ay) * u];
+  };
+  // 進む向きに少し傾ける(⚡の絵の向きに合わせて)
+  const tilt = (i) => {
+    const [ax, ay] = pts[i];
+    const [bx, by] = pts[i + 1];
+    return Math.max(-35, Math.min(35, (Math.atan2(bx - ax, by - ay) * -180) / Math.PI * 0.6));
+  };
+  const head = document.createElement('span');
+  head.className = 'hotel-part';
+  head.style.fontSize = `${hSize}px`;
+  head.style.left = '0';
+  head.style.top = '0';
+  head.style.zIndex = '2';
+  head.style.willChange = 'transform';
+  const hg = document.createElement('span');
+  hg.className = 'reaction-glyph';
+  setGlyph(hg, '⚡');
+  head.appendChild(hg);
+  const frames = [];
+  const at = (x, y, deg, t) => frames.push({ transform: `translate(${x - hSize / 2}px, ${y - hSize / 2}px) rotate(${deg}deg)`, offset: t / (fallMs + 250) });
+  for (let i = 0; i < n; i++) {
+    const t0 = i * (MOVE_MS + PAUSE_MS);
+    at(pts[i][0], pts[i][1], tilt(i), t0);
+    at(pts[i + 1][0], pts[i + 1][1], tilt(i), t0 + MOVE_MS);
+    if (i < n - 1) at(pts[i + 1][0], pts[i + 1][1], tilt(i + 1), t0 + MOVE_MS + PAUSE_MS);
+  }
+  // 下まで落ちたら、つぶれて消える
+  frames.push({ transform: `translate(${tip[0] - hSize / 2}px, ${tip[1] - hSize / 2}px) scale(1.3, 0.5)`, offset: (fallMs + 90) / (fallMs + 250) });
+  frames.push({ transform: `translate(${tip[0] - hSize / 2}px, ${tip[1] - hSize / 2}px) scale(0)`, offset: 1 });
+  head.style.transform = frames[0].transform;
+  box.appendChild(head);
+  head.animate(frames, { duration: fallMs + 250, easing: 'linear', fill: 'forwards' });
+
+  /** 小さな⚡がぴょんと飛び出して消える(光らせない) */
+  const bit = (cx, cy, size, dx, dy) => {
+    const b = document.createElement('span');
+    b.className = 'hotel-part zap-bit';
+    b.style.fontSize = `${size}px`;
+    b.style.left = `${cx - size / 2}px`;
+    b.style.top = `${cy - size / 2}px`;
+    b.style.zIndex = '2';
+    const g = document.createElement('span');
+    g.className = 'reaction-glyph';
+    setGlyph(g, '⚡');
+    b.appendChild(g);
+    box.appendChild(b);
+    b.animate(
+      [
+        { transform: 'translate(0, 0) scale(0.4) rotate(0deg)', opacity: 1 },
+        { transform: `translate(${dx * 0.7}px, ${dy * 0.7}px) scale(1) rotate(${dx > 0 ? 15 : -15}deg)`, opacity: 1, offset: 0.6 },
+        { transform: `translate(${dx}px, ${dy}px) scale(0.8) rotate(${dx > 0 ? 25 : -25}deg)`, opacity: 0 },
+      ],
+      { duration: 450, easing: 'ease-out', fill: 'forwards' },
+    );
+    setTimeout(() => b.remove(), 480);
+  };
+  // 落ちた所(画面の下)で、小さな⚡がはじける
+  setTimeout(() => {
+    for (let i = 0; i < 4; i++) {
+      const a = Math.PI * (1.15 + (i / 3) * 0.7);
+      bit(tip[0], vh - base * 0.3, base * 0.45, Math.cos(a) * base * 1.1, Math.sin(a) * base * 1.1);
+    }
+  }, fallMs);
+
+  // ---- しびれる生き物 ----
+  // 落ちていく⚡に触れた生き物がしびれる(OBSと自分の画面で同じ刻みで確かめる)
+  const startAt = opts && typeof opts.at === 'number' && Math.abs(opts.at - Date.now()) < 3000 ? opts.at : Date.now();
+  let zapped = 0;
+  const done = new Set();
+  simAdd(startAt, (now) => {
+    if (!box.isConnected) return false;
+    const t = now - startAt;
+    const [hx, hy] = posAt(Math.min(t, fallMs));
+    const touches = (r) => r.width > 0 && Math.hypot(r.left + r.width / 2 - hx, r.top + r.height / 2 - hy) < hSize * 0.45 + r.width * 0.45;
+    for (const o of activeItems) {
+      if (o !== box && o.dataset.creature && o.dataset.emojiId !== 'baby' && !o.dataset.dating && o.isConnected && touches(rectOf(o))) {
+        zap({ el: o, isItem: true });
+        zapped += 1;
+      }
+    }
+    for (const o of stage.querySelectorAll('[data-actor][data-creature]')) {
+      if (done.has(o) || box.contains(o) || o.dataset.emojiId === 'baby' || o.dataset.starred || o.dataset.noStar || o.closest('.star-scene')) continue;
+      if (touches(rectOf(o)) && sceneVisible(o)) {
+        done.add(o);
+        zap({ el: o, isItem: false });
+        zapped += 1;
+      }
+    }
+    if (t < fallMs) return true;
+    finish(zapped ? ZAP_MS + 1700 : 500);
+    return false;
+  });
+
+  /** ビリビリしびれる(骨と交互) → 黒こげ → 煙を出して消える */
+  function zap(t) {
+    let el;
+    if (t.isItem) {
+      t.el.dataset.dating = '1';
+      el = takeOver(t.el, box).el;
+    } else {
+      const r0 = rectOf(t.el);
+      const copy = t.el.cloneNode(true);
+      t.el.dataset.starred = '1';
+      t.el.style.visibility = 'hidden';
+      copy.style.transition = 'none';
+      copy.style.position = 'relative';
+      copy.style.left = '0';
+      copy.style.top = '0';
+      copy.style.opacity = '1';
+      el = document.createElement('span');
+      el.className = 'hotel-part';
+      el.appendChild(copy);
+      box.appendChild(el);
+      el.style.left = `${r0.left}px`;
+      el.style.top = `${r0.top}px`;
+      const r1 = rectOf(copy);
+      el.style.left = `${r0.left + (r0.left - r1.left)}px`;
+      el.style.top = `${r0.top + (r0.top - r1.top)}px`;
+    }
+    el.dataset.starred = '1';
+    el.style.zIndex = '1';
+    const r = rectOf(el);
+    const size = Math.max(r.width, r.height) || base;
+    // 揺らす係(外側)と、骨と交互にパッパッと入れ替わる中身
+    const shaker = document.createElement('span');
+    shaker.className = 'zap-shake';
+    shaker.style.display = 'inline-block';
+    shaker.style.position = 'relative';
+    const bodyWrap = document.createElement('span');
+    bodyWrap.className = 'zap-body';
+    bodyWrap.style.display = 'inline-block';
+    while (el.firstChild) bodyWrap.appendChild(el.firstChild);
+    shaker.appendChild(bodyWrap);
+    const xray = document.createElement('span');
+    xray.className = 'zap-xray reaction-glyph';
+    xray.style.fontSize = `${size * 0.85}px`;
+    xray.style.top = `${size * 0.06}px`;
+    setGlyph(xray, '💀');
+    shaker.appendChild(xray);
+    el.appendChild(shaker);
+    // まわりに小さな⚡
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    for (let i = 0; i < 3; i++) {
+      setTimeout(() => {
+        if (!el.isConnected) return;
+        const a = (i / 3) * Math.PI * 2 - Math.PI / 2 + i * 0.5;
+        bit(cx + Math.cos(a) * size * 0.45, cy + Math.sin(a) * size * 0.45, size * 0.35, Math.cos(a) * size * 0.5, Math.sin(a) * size * 0.5);
+      }, i * 300);
+    }
+    // しびれ終わったら黒こげになって、煙を出してから消える
+    setTimeout(() => {
+      if (!el.isConnected) return;
+      xray.remove();
+      shaker.classList.remove('zap-shake');
+      bodyWrap.classList.remove('zap-body');
+      bodyWrap.style.filter = 'brightness(0.28) saturate(0.5) contrast(1.2)';
+      for (let i = 0; i < 3; i++) {
+        const sm = document.createElement('span');
+        sm.className = 'zap-smoke reaction-glyph';
+        setGlyph(sm, '💨');
+        sm.style.fontSize = `${size * 0.5}px`;
+        sm.style.left = `${cx - size * 0.25 + (i - 1) * size * 0.3}px`;
+        sm.style.top = `${r.top - size * 0.1}px`;
+        sm.style.setProperty('--dx', `${(i - 1) * size * 0.2}px`);
+        sm.style.animationDelay = `${i * 160}ms`;
+        sm.style.opacity = '0';
+        box.appendChild(sm);
+      }
+      setTimeout(() => {
+        el.style.transition = 'opacity 500ms ease-in';
+        el.style.opacity = '0';
+      }, 1100);
+    }, ZAP_MS);
+  }
+}
+
+/**
+ * ReaCastから届いたリアクションを表示する。自分の画面とOBSは届くのが少しずれることがある
+ * ので、ReaCastが決めた時刻(at。少し先)に合わせて同時に出す。乱数も同じ種から作る
+ */
+function playReaction(p) {
+  const run = () => {
+    const prev = rand;
+    rand = seededRandom(p.seed);
+    try {
+      spawnReaction(p.emoji, { mark: !!p.mark, seed: p.seed, at: p.at });
+    } finally {
+      rand = prev;
+    }
+  };
+  const wait = typeof p.at === 'number' ? p.at - Date.now() : 0;
+  if (wait > 0 && wait < 3000) setTimeout(run, wait);
+  else run();
+}
+
+function spawnReaction(emojiId, opts) {
+  const emoji = emojiById.get(emojiId);
+  if (!emoji) return;
+  if (emojiId === 'rainbow') {
+    spawnRainbow(opts);
+    return;
+  }
+  if (emojiId === 'lovehotel') {
+    spawnHotel(opts);
+    return;
+  }
+  if (emojiId === 'sunglasses') {
+    spawnSunglasses(opts);
+    return;
+  }
+  if (emojiId === 'mushroom') {
+    spawnMushroom(opts);
+    return;
+  }
+  if (emojiId === 'apple') {
+    spawnApple(opts);
+    return;
+  }
+  if (emojiId === 'star') {
+    spawnStar(opts);
+    return;
+  }
+  if (emojiId === 'thunder') {
+    spawnThunder(opts);
+    return;
+  }
+
+  enforceMaxConcurrent();
+
+  const kind = emoji.anim || 'laugh';
+  const preset = ANIM_PRESETS[kind] || {};
+  const motion = preset.motion || 'rise';
+  // グリフ(内側のspan)にかけるCSS自己アニメーションの名前。既定ではkindと
+  // 同じ名前(anim-clap等)を使うが、複数のリアクションで同じ動き(例: ⬆⬇➡⬅の
+  // 「ダッシュ」演出)を使い回したい場合はpreset.glyphAnimで上書きできる。
+  const glyphAnimKey = preset.glyphAnim || kind;
+  const comboLevel = getComboLevel(emojiId);
+  // 「連打すると大きくなる」がOFFの場合、または、このリアクションが個別に
+  // 「大きくしない」に指定されている場合は、常にcomboLevel=1相当のサイズ固定に
+  // する(comboLevel自体の計測・コンボ判定はコンボ表示以外に副作用が無いため
+  // 続けたままでよく、サイズへの反映だけを止める)。
+  const comboGrowthAllowed =
+    settings.comboGrowthEnabled && !settings.noComboGrowthIds.has(emojiId);
+  const size = comboGrowthAllowed
+    ? settings.baseSizePx + settings.comboSizeStepPx * (comboLevel - 1)
+    : settings.baseSizePx;
+  const duration =
+    settings.animationDurationMs * (0.85 + rand() * 0.3) * (preset.durationFactor ?? 1);
+
+  const el = document.createElement('div');
+  el.className = 'reaction-item';
+  // 🏩が画面の生き物を見つけてホテルに連れていくための印
+  if (emoji.creature) el.dataset.creature = '1';
+  // 🍄が👶を見分ける(👶はいつも大きくなる)ため
+  el.dataset.emojiId = emojiId;
+  // 🕶️が画面の顔を見つけてグラサンをかけさせるための印
+  if (emoji.face) el.dataset.face = '1';
+
+  const glyph = document.createElement('span');
+  glyph.className = `reaction-glyph anim-${glyphAnimKey}`;
+  // 草(id:kusa)のように、絵文字ではなく複数の文字からランダムに1つを選んで
+  // 表示したいリアクション用。無ければ従来通りchar固定。
+  setGlyph(
+    glyph,
+    emoji.randomChars ? emoji.randomChars[Math.floor(rand() * emoji.randomChars.length)] : emoji.char,
+  );
+  glyph.style.fontSize = `${size}px`;
+  glyph.style.lineHeight = '1';
+  // 🐈のように、たまに黒猫にするもの(emoji-set.jsのblackChance)。黒猫の絵文字
+  // (🐈‍⬛)はWindows 10のフォントに無く「🐈⬛」と2つに分かれて表示されるため、
+  // 同じ🐈を色のフィルターで黒くして表す(外側にかけて、自己アニメーションと干渉させない)
+  if (emoji.blackChance && rand() < emoji.blackChance) {
+    el.style.filter = 'grayscale(1) brightness(0.32) contrast(1.6)';
+  }
+  if (emoji.color) {
+    // 絵文字ではなく普通の文字として色指定して表示する項目(草・w等)。
+    // 線が細く見づらいとの指摘があったため太字にする。
+    glyph.style.color = emoji.color;
+    glyph.style.fontWeight = '900';
+  }
+  // グリフ自身のアニメーションは、全体の表示時間の中で2〜3回ループさせて
+  // 「動き続けている」印象にする(faint/stampは一度きりの動きなので1回)。
+  // 重要: 以前はここでanimationDuration等の個別プロパティしか設定しておらず、
+  // 肝心のanimation-name(どのCSS @keyframesを使うか)を一切指定していなかった
+  // ため、拍手が弾む・炎がチラつく等の「絵文字ごとの自己アニメーション」が
+  // 実際には一度も再生されていなかった(外側el側の移動だけが見えていた)。
+  glyph.style.animationName = `anim-${glyphAnimKey}`;
+  // preset.glyphAnimDurationFactor/glyphAnimIterations: 個別のリアクションだけ
+  // 自己アニメーションのテンポ・ループ回数を既定値から変えたい場合に使う
+  // (例: 👏拍手は「もっとパチパチパチと」という要望に応え、既定より速いテンポで
+  // 多めにループさせている。clapプリセット参照)。
+  const glyphAnimDurationFactor = preset.glyphAnimDurationFactor ?? 0.42;
+  glyph.style.animationDuration = `${Math.max(300, duration * glyphAnimDurationFactor)}ms`;
+  const defaultIterations = glyphAnimKey === 'faint' || glyphAnimKey === 'stamp' ? 1 : 3;
+  glyph.style.animationIterationCount = String(preset.glyphAnimIterations ?? defaultIterations);
+  glyph.style.animationTimingFunction = 'ease-in-out';
+  glyph.style.animationFillMode = 'both';
+
+  // 神ｗ専用の「ゲーミングカラー」(虹色が流れ続けるグラデーション文字)。
+  // background-clip:textでグラデーションを文字の形にクリップし、
+  // background-positionを動かすアニメーション(rainbow-shift)を、上ですでに
+  // 設定済みのグリフ自己アニメーション(anim-${glyphAnimKey})に追加で重ねる。
+  // CSSのanimation-name等はカンマ区切りで複数指定できるため、既存の値の後ろに
+  // 追記するだけでよい(単純に上書きすると自己アニメーションが消えてしまう)。
+  if (emoji.rainbow) {
+    // 文字の形で切り抜くので、文字はグリフに直接入れる(影もグリフに付ける)
+    glyph.textContent = glyph.textContent;
+    glyph.classList.remove('has-gin');
+    glyph.style.background =
+      'linear-gradient(90deg, #ff3b3b, #ffb03b, #f4ff3b, #3bff6b, #3bd4ff, #7a3bff, #ff3bd4, #ff3b3b)';
+    glyph.style.backgroundSize = '400% 100%';
+    glyph.style.webkitBackgroundClip = 'text';
+    glyph.style.backgroundClip = 'text';
+    glyph.style.color = 'transparent';
+    glyph.style.webkitTextFillColor = 'transparent';
+    glyph.style.fontWeight = '900';
+    glyph.style.animationName += ', rainbow-shift';
+    glyph.style.animationDuration += ', 1.1s';
+    glyph.style.animationIterationCount += ', infinite';
+    glyph.style.animationTimingFunction += ', linear';
+    glyph.style.animationFillMode += ', both';
+  }
+
+  // 🎉のように絵文字自体のデザイン上いつも同じ向きになってしまうものは、
+  // preset.randomFlipが立っていれば約半分の確率で左右反転させる。glyph本体の
+  // transformはCSSの@keyframesが常に上書きしてしまうため、反転だけは
+  // 別の(アニメーションしない)ラップ要素に持たせて、glyph自身の自己
+  // アニメーションと干渉しないようにしている。
+  let glyphHost = glyph;
+  if (preset.randomFlip && rand() < 0.5) {
+    const flipWrap = document.createElement('span');
+    flipWrap.style.display = 'inline-block';
+    flipWrap.style.transform = 'scaleX(-1)';
+    flipWrap.appendChild(glyph);
+    glyphHost = flipWrap;
+  }
+  el.appendChild(glyphHost);
+
+  // 🍜ラーメン向け: 湯気エフェクトを絵文字のすぐ上に追加する。.reaction-item(el)
+  // 自身の子要素として追加することで、el側のtransform(移動アニメーション)が
+  // そのままこの湯気にも(親子関係により自動的に)効き、「絵文字を追尾する」
+  // 動きを別途実装しなくても実現できる。湯気自体のふわふわ上昇・フェードは
+  // CSSの@keyframes steam-rise(overlay.html参照)でelとは独立にループさせる
+  // (表示されている間ずっと絵文字の上に居続ける)。
+  if (preset.steam) {
+    const puffCount = 3;
+    for (let i = 0; i < puffCount; i++) {
+      const puff = document.createElement('span');
+      puff.className = 'steam-puff';
+      const puffSize = Math.max(6, size * 0.22);
+      puff.style.width = `${puffSize}px`;
+      puff.style.height = `${puffSize}px`;
+      puff.style.marginLeft = `${-puffSize / 2}px`;
+      puff.style.setProperty('--puff-x', `${(i - 1) * (size * 0.16)}px`);
+      puff.style.animationDelay = `${i * 300}ms`;
+      puff.style.animationDuration = `${1100 + i * 150}ms`;
+      el.appendChild(puff);
+    }
+  }
+
+  const vw = stageW();
+  const vh = stageH();
+  const path = computeMotionPath(motion, preset, size, vw, vh, duration);
+
+  el.style.left = `${path.startX}px`;
+  el.style.top = `${path.startY}px`;
+  el.style.transform = path.initialTransform;
+  el.style.opacity = '0';
+  // フェードイン(0→表示不透明度)にかける時間は、常に全体のduration(表示時間
+  // 全体)と同じにしていたため、durationFactorが大きいリアクション(例: 💣は
+  // 着地後2〜3秒待ってから爆発するため2.6倍にしてある)では、実際に動き終わって
+  // 画面上に着地した後もずっと透明度が上がりきらず、しばらく「半透明のまま」に
+  // 見えてしまう不具合があった(「爆弾が半透明な気がする」という指摘の原因)。
+  // フェードインは実際に動き終わる頃(moveDuration)には完了しているべきなので、
+  // 全体の尺とは切り離し、動きが終わるタイミングを基準にした短い時間に固定する。
+  // (waypointsを使う動き(⚽💩🧨等)は、最初のwaypointが発火した時点で下の
+  // waypointループが改めてopacityのtransition時間をduration基準に上書きするため、
+  // 実質的にこの問題の影響を受けない。影響が出るのはwaypointsを使わない、かつ
+  // moveDurationがdurationよりかなり短い動き(💣のquickFall等)だけ)。
+  const fadeInMs = Math.min(duration, Math.max(220, path.moveDuration + 220));
+  // transform側のtransition時間は、後でフェードアウト(下のsetTimeout)を
+  // 仕掛ける際にも(opacity側だけ変更したいので)そのまま使い回せるよう、
+  // 変数として覚えておく(waypointsでlegMsが指定されるたびに更新する)。
+  let transformDurationMs = path.moveDuration;
+  el.style.transition = `transform ${transformDurationMs}ms ${path.easing}, opacity ${fadeInMs}ms ease-out`;
+
+  // 話した言葉で飛んだリアクション(配信者自身の発言)には、周りに水色の光の印を付ける
+  if (opts && opts.mark) el.classList.add('self-mark');
+  stage.appendChild(el);
+  activeItems.push(el);
+
+  // sideIn(画面端から登場)は開始位置が画面外なので、パーティクル(効果音的な
+  // 演出)は登場し終えた「命中/出現」の瞬間に、到着位置で発生させる。それ以外は
+  // 最初から画面内にいるので、従来通り開始位置ですぐに発生させる。
+  if (preset.particles) {
+    // sideIn(画面端から登場)・quickFall(💣: 落下して着地)・popUp(🧨: 跳ねて
+    // 上がる)は、開始位置ではなく「到着した瞬間」の位置でパーティクルを
+    // 出したい動きなので、moveDurationだけ待ってから終了位置(endX/endY)を
+    // 使う。それ以外は従来通り開始位置ですぐに発生させる。
+    const particlesAtArrival = motion === 'sideIn' || motion === 'quickFall' || motion === 'popUp';
+    const particleDelay = particlesAtArrival ? path.moveDuration : 0;
+    // preset.particleOffsetX/Y: 絵文字の中心からずらしてパーティクルを出したい
+    // 場合の倍率(サイズ基準)。例: 👺のビームを「鼻の先」あたりから出すため。
+    const particleX =
+      (particlesAtArrival ? path.endX : path.startX) + size / 2 + size * (preset.particleOffsetX || 0);
+    const particleY =
+      (particlesAtArrival ? path.endY : path.startY) + size / 2 + size * (preset.particleOffsetY || 0);
+    setTimeout(() => {
+      spawnParticles(preset.particles, particleX, particleY, size);
+    }, particleDelay);
+  }
+
+  // 💣 爆弾専用: 着地してからしばらく待ち、ランダムなタイミングで爆発する。
+  // 「爆発をもっとド派手に」という要望に対応し、以前の紙吹雪+リング1個だけの
+  // 演出から、閃光(spawnFlash)・二重の衝撃波リング・色付きの火花・破片の
+  // 飛散まで含めた、より賑やかな爆発演出に強化してある。
+  if (preset.explodeDelayRangeMs) {
+    const [minDelay, maxDelay] = preset.explodeDelayRangeMs;
+    const explodeDelay = path.moveDuration + minDelay + rand() * (maxDelay - minDelay);
+    const explodeX = path.endX + size / 2;
+    const explodeY = path.endY + size / 2;
+    setTimeout(() => {
+      if (!el.isConnected) return; // 爆発前に片付けられていたら何もしない(念のため)
+      // 中心の閃光(一瞬だけ明るく光ってから消える)
+      spawnFlash(explodeX, explodeY, size * 2.6);
+      // 破片(紙吹雪)を以前より多めに飛散させる
+      spawnParticles({ shape: 'confetti', count: 26, life: 800 }, explodeX, explodeY, size);
+      // オレンジ・赤の火花を2色重ねて飛ばし、爆炎らしい色の広がりを出す
+      spawnParticles(
+        { shape: 'dot', color: '#ffcf6b', count: 12, spread: 60, life: 620, drift: 'burst' },
+        explodeX,
+        explodeY,
+        size
+      );
+      spawnParticles(
+        { shape: 'dot', color: '#ff5b3d', count: 10, spread: 46, life: 520, drift: 'burst' },
+        explodeX,
+        explodeY,
+        size
+      );
+      // 白い破片線を放射状に飛ばし、勢いを強調する
+      spawnParticles(
+        { shape: 'streak', count: 8, spread: 68, life: 480, color: 'rgba(255,255,255,0.85)' },
+        explodeX,
+        explodeY,
+        size
+      );
+      // 衝撃波を二重(内側は明るく太め、外側は薄く大きめ)に出す
+      spawnRing(explodeX, explodeY, size, {
+        life: 480,
+        thickness: 4,
+        color: 'rgba(255,214,140,0.95)',
+        glow: true,
+        scale: 1.6,
+      });
+      spawnRing(explodeX, explodeY, size, {
+        life: 680,
+        thickness: 2,
+        color: 'rgba(255,255,255,0.55)',
+        scale: 2.8,
+      });
+      // 爆発の瞬間、絵文字自体も勢いよく弾けて回転しながら消えるようにする
+      el.style.transition = 'transform 340ms cubic-bezier(.22,1.6,.4,1), opacity 300ms ease-out';
+      const explodeSpin = (rand() < 0.5 ? -1 : 1) * (18 + rand() * 14);
+      el.style.transform += ` scale(2.1) rotate(${explodeSpin.toFixed(0)}deg)`;
+      el.style.opacity = '0';
+    }, explodeDelay);
+  }
+
+  // 👺天狗専用: レーザービームの代わりに、消える間際(フェードアウトが始まる
+  // 直前あたり)にその場で弾けて爆発するように消滅させる。sideInは登場後
+  // 位置が変わらないまま止まっているので、最終到達位置(path.endX/endY)を
+  // 使えばよい(bomb向けのexplodeDelayRangeMs処理と同じ考え方)。
+  if (preset.explodeAtEnd) {
+    const explodeDelay = Math.max(path.moveDuration + 50, duration * 0.72);
+    const explodeX = path.endX + size / 2;
+    const explodeY = path.endY + size / 2;
+    setTimeout(() => {
+      if (!el.isConnected) return;
+      spawnParticles({ shape: 'ring', life: 420 }, explodeX, explodeY, size * 1.2);
+      spawnParticles(
+        { shape: 'dot', color: '#ff5252', count: 10, spread: 34, life: 480, drift: 'burst' },
+        explodeX,
+        explodeY,
+        size
+      );
+      el.style.transition = 'transform 220ms ease-out, opacity 220ms ease-out';
+      el.style.transform += ' scale(1.5)';
+      el.style.opacity = '0';
+    }, explodeDelay);
+  }
+
+  // 🎆花火専用: 「ランダムで出る感じでド派手に」という要望に応え、1回の
+  // リアクションで複数の打ち上げ地点(本体の位置+近くのランダムな2地点)を
+  // 少しずつタイミングをずらして開かせることで、単発のバーストより花火大会
+  // らしい賑やかさを出す(spawnFireworkBurst参照)。
+  if (preset.fireworksBurst) {
+    const burstX = path.startX + size / 2;
+    const burstY = path.startY + size / 2;
+    setTimeout(() => {
+      if (el.isConnected) spawnFireworkBurst(burstX, burstY, size);
+    }, 60);
+    for (let i = 0; i < 2; i++) {
+      const offsetX = (rand() - 0.5) * size * 5;
+      const offsetY = -rand() * size * 2.5;
+      const delay = 280 + i * 280 + rand() * 180;
+      setTimeout(() => {
+        if (el.isConnected) spawnFireworkBurst(burstX + offsetX, burstY + offsetY, size);
+      }, delay);
+    }
+  }
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      // waypointsがある場合(ジグザグ等)は、最初の経由地点をrAFで適用し、
+      // 残りはsetTimeoutで順に適用していく(最後の要素が最終的な着地姿勢)。
+      // waypointsが無い場合は、従来通り単純に開始→終了の2点間で動かす。
+      el.style.transform = path.waypoints ? path.waypoints[0].transform : path.finalTransform;
+      el.style.opacity = String(settings.glyphOpacity);
+    });
+  });
+
+  // 🐈: 他のリアクションにじゃれつく。走る区間(chase: 'run')の時に画面に他の
+  // リアクションがあれば、一番近いものの横へ走っていき、続く区間(paw/paw2)で
+  // 前足でちょいちょいと触る。位置を調べるのは区間ごとに1回だけ(重くならないように)。
+  let playmate = null;
+  if (motion === 'prowl') el.dataset.cat = '1';
+  const chaseTransform = (wp) => {
+    if (wp.chase === 'run') {
+      const me = rectOf(el);
+      const mx = me.left + me.width / 2;
+      const my = me.top + me.height / 2;
+      let best = null;
+      let bestD = Infinity;
+      for (const other of activeItems) {
+        if (other === el || !other.isConnected || other.dataset.cat || other.dataset.noChase) continue;
+        const r = rectOf(other);
+        if (r.width === 0) continue;
+        const d = Math.hypot(r.left + r.width / 2 - mx, r.top + r.height / 2 - my);
+        if (d < bestD) {
+          bestD = d;
+          best = other;
+        }
+      }
+      playmate = best;
+    }
+    if (!playmate || !playmate.isConnected) return null;
+    const r = rectOf(playmate);
+    const me = rectOf(el);
+    const tx = r.left + r.width / 2;
+    const ty = r.top + r.height / 2;
+    // 相手の横(今いる側)に並ぶ。🐈は左向きの絵文字なので、右を向く時は左右反転
+    const fromLeft = me.left + me.width / 2 < tx;
+    // 少し重なるくらいの距離(じゃれている感じに)
+    const x = Math.min(path.maxX, Math.max(path.minX, fromLeft ? tx - size * 1.05 : tx + size * 0.05));
+    const y = Math.min(path.maxY, Math.max(path.minY, ty - size * 0.45));
+    const flip = `scale(${fromLeft ? -1 : 1}, 1)`;
+    const lean = fromLeft ? 1 : -1;
+    const base = `translate(${x - path.startX}px, ${y - path.startY}px) ${flip}`;
+    if (wp.chase === 'paw') return `translate(${x - path.startX + lean * size * 0.18}px, ${y - path.startY - size * 0.08}px) ${flip} rotate(${-12}deg) scale(1.08, 0.92)`;
+    return base;
+  };
+
+  if (path.waypoints) {
+    for (let i = 1; i < path.waypoints.length; i++) {
+      const wp = path.waypoints[i];
+      setTimeout(() => {
+        // wp.legMs: この区間だけ、transitionにかける時間(transform分)を
+        // 差し替えたい場合に指定する(例: 💩は「落下」の区間だけ他の区間
+        // (着地バウンド)よりゆっくり動かしたい、⚽は物理シミュレーションの
+        // 刻み幅ごとに毎回差し替える、等)。transition自体は生成時に
+        // `transform ${moveDuration}ms ..., opacity ${duration}ms ...` の
+        // 2プロパティで設定してあるので、transitionDurationを同じ並び
+        // (transform用, opacity用)で上書きすればよい。
+        if (wp.legMs) {
+          transformDurationMs = wp.legMs;
+          el.style.transitionDuration = `${wp.legMs}ms, ${duration}ms`;
+        }
+        el.style.transform = (wp.chase && chaseTransform(wp)) || wp.transform;
+      }, wp.atMs);
+    }
+  }
+
+  setTimeout(() => {
+    // フェードアウトは、上のfadeInMsによる短縮の影響を受けず、これまで通り
+    // duration(表示時間全体)基準のゆったりした減衰カーブのままにする
+    // (transform側の現在のtransition時間(transformDurationMs)はそのまま
+    // 保ちつつ、opacity側だけを差し替える)。
+    el.style.transitionDuration = `${transformDurationMs}ms, ${duration}ms`;
+    el.style.opacity = '0';
+  }, duration * 0.75);
+
+  setTimeout(() => {
+    el.remove();
+    const idx = activeItems.indexOf(el);
+    if (idx !== -1) activeItems.splice(idx, 1);
+  }, duration + 100);
+}
+
+function enforceMaxConcurrent() {
+  while (activeItems.length >= settings.maxConcurrent) {
+    const oldest = activeItems.shift();
+    if (oldest) oldest.remove();
+  }
+}
+
+/* ------------------------- パーティクル ------------------------- */
+
+// リアクション本体(.reaction-item)はenforceMaxConcurrentで同時表示数の上限を
+// 設けてあるが、パーティクル(効果線・紙吹雪・輝き粒等)側にはこれまで上限が
+// 無かった。🎆花火のように1回のリアクションで大量のパーティクル(閃光+紙吹雪+
+// 輝き粒+リングを3箇所ぶん、100個超)を発生させる演出を追加したことで、
+// 「連発してもCPU/GPU使用率自体は上がらないのに、表示のコマ落ちだけ目立つ」
+// という報告があった。原因は使用率グラフには出にくい種類の負荷(大量のDOM要素を
+// 短時間に生成・破棄し続けることによるメインスレッドのスタイル再計算・
+// レイアウト処理の積み重なり)と考えられるため、パーティクルの同時生存数
+// 自体にも上限を設け、上限を超えたら古いものから即座に片付けるようにする
+// (enforceMaxConcurrentと同じ考え方をパーティクル側にも広げたもの)。
+const activeParticles = [];
+const MAX_PARTICLES = 260;
+
+function enforceMaxParticles() {
+  while (activeParticles.length > MAX_PARTICLES) {
+    const oldest = activeParticles.shift();
+    if (oldest) oldest.remove();
+  }
+}
+
+/** パーティクル生成関数の末尾で共通して行っていた「stageへ追加→寿命後に
+ * 自分で消える」処理を1箇所にまとめ、あわせてactiveParticlesへの登録・
+ * 上限チェック・(寿命が来て消える際の)登録解除まで面倒を見る。 */
+function trackParticle(el, life) {
+  activeParticles.push(el);
+  enforceMaxParticles();
+  setTimeout(() => {
+    el.remove();
+    const idx = activeParticles.indexOf(el);
+    if (idx !== -1) activeParticles.splice(idx, 1);
+  }, life + 60);
+}
+
+function spawnParticles(spec, cx, cy, baseSize) {
+  if (spec.shape === 'ring') {
+    spawnRing(cx, cy, baseSize, spec);
+    return;
+  }
+  if (spec.shape === 'laser') {
+    spawnLaserBeam(cx, cy, baseSize, spec);
+    return;
+  }
+  // 👊: 中心から放射状に伸びる集中線(漫画の「バーン!」的な演出)。
+  if (spec.shape === 'radialLines') {
+    spawnRadialLines(cx, cy, baseSize, spec);
+    return;
+  }
+  const count = spec.count || 4;
+  for (let i = 0; i < count; i++) {
+    spawnOneParticle(spec, cx, cy, baseSize, i);
+  }
+}
+
+// 👺天狗のビーム用: (cx, cy)を起点に右方向へ伸びるレーザー光線を1本出す
+// (@keyframes particle-laserで、左端を軸にscaleXが0→1に伸びて見せる)。
+function spawnLaserBeam(cx, cy, baseSize, spec) {
+  const el = document.createElement('div');
+  el.className = 'particle';
+  const length = spec.length || baseSize * 2.4;
+  const thickness = spec.thickness || 5;
+  el.style.left = `${cx}px`;
+  el.style.top = `${cy - thickness / 2}px`;
+  el.style.width = `${length}px`;
+  el.style.height = `${thickness}px`;
+  el.style.borderRadius = `${thickness}px`;
+  el.style.background = spec.color || 'rgba(255,70,70,0.95)';
+  el.style.boxShadow = `0 0 ${thickness * 2.5}px ${spec.color || 'rgba(255,70,70,0.95)'}`;
+  el.style.transformOrigin = 'left center';
+  const life = spec.life || 420;
+  el.style.animation = `particle-laser ${life}ms ease-out forwards`;
+  stage.appendChild(el);
+  trackParticle(el, life);
+}
+
+// spec.scale: 最終的な直径をbaseSizeの何倍にするか(既定はsmall:2〜3px枠の
+// 従来通り1.4/2.2倍)。spec.color/thicknessでリングの色・太さを変えられ、
+// spec.glowを立てるとリングの色に合わせたboxShadowの光彩を追加する
+// (💣爆発の衝撃波演出用に拡張。それ以外の既存呼び出し元は指定しないので
+// 従来通りの見た目のまま変わらない)。
+function spawnRing(cx, cy, baseSize, spec) {
+  const ring = document.createElement('div');
+  ring.className = 'particle';
+  const mult = spec.scale ?? (spec.small ? 1.4 : 2.2);
+  const size = baseSize * mult;
+  ring.style.left = `${cx - size / 2}px`;
+  ring.style.top = `${cy - size / 2}px`;
+  ring.style.width = `${size}px`;
+  ring.style.height = `${size}px`;
+  ring.style.borderRadius = '50%';
+  const thickness = spec.thickness || (spec.small ? 2 : 3);
+  const color = spec.color || 'rgba(255,255,255,0.85)';
+  ring.style.border = `${thickness}px solid ${color}`;
+  if (spec.glow) {
+    ring.style.boxShadow = `0 0 ${thickness * 3}px ${color}`;
+  }
+  ring.style.boxSizing = 'border-box';
+  ring.style.animation = `particle-ring ${spec.life}ms ease-out forwards`;
+  stage.appendChild(ring);
+  trackParticle(ring, spec.life);
+}
+
+// 💣爆発専用: 中心が一瞬明るく光ってから広がってフェードする閃光。
+function spawnFlash(cx, cy, size) {
+  const el = document.createElement('div');
+  el.className = 'particle';
+  el.style.left = `${cx - size / 2}px`;
+  el.style.top = `${cy - size / 2}px`;
+  el.style.width = `${size}px`;
+  el.style.height = `${size}px`;
+  el.style.borderRadius = '50%';
+  el.style.background =
+    'radial-gradient(circle, rgba(255,244,214,0.95) 0%, rgba(255,158,68,0.8) 38%, rgba(255,90,40,0) 72%)';
+  // 'screen'合成にすることで、暗い配信画面の上でも明るく光って見えつつ、
+  // 四角い当たり判定の縁が不自然に主張しないようにする。
+  el.style.mixBlendMode = 'screen';
+  const life = 380;
+  el.style.animation = `particle-flash ${life}ms ease-out forwards`;
+  stage.appendChild(el);
+  trackParticle(el, life);
+}
+
+// 🎆専用: 1箇所分の花火バースト(閃光+紙吹雪+色付きの輝き粒+衝撃波リング)を
+// まとめて出す。色はCONFETTI_COLORSからランダムに選び、毎回違う色合いの
+// 花火に見えるようにする。
+//
+// 1回のリアクションで3箇所ぶん(spawnReaction参照)呼ばれるため、1箇所あたりの
+// 個数は他のリアクションの演出より少し絞ってある(以前はconfetti22+dot16=38個
+// ×3箇所=114個と、他のリアクション(多くても20個程度)よりかなり多く、連発時に
+// 表示のコマ落ちの主な原因になっていたため。あわせてactiveParticlesの上限
+// (enforceMaxParticles)も新設したので、どちらの対策でも重くなりすぎないよう
+// 二重に効くようにしてある)。
+function spawnFireworkBurst(cx, cy, size) {
+  const color = CONFETTI_COLORS[Math.floor(rand() * CONFETTI_COLORS.length)];
+  spawnFlash(cx, cy, size * 1.9);
+  spawnParticles({ shape: 'confetti', count: 14, life: 950 }, cx, cy, size);
+  spawnParticles({ shape: 'dot', color, count: 10, spread: 62, life: 900, drift: 'twinkle' }, cx, cy, size);
+  spawnRing(cx, cy, size, { life: 520, thickness: 3, color: 'rgba(255,255,255,0.85)', glow: true, scale: 2.3 });
+}
+
+// 👊専用: (cx, cy)を中心に、放射状に伸びる集中線を複数本出す(漫画の
+// 「バーン!」的な演出)。spawnLaserBeamと同じtransform-origin:left centerの
+// 考え方を使うが、1本だけでなく全方位に等間隔+少しのランダムなずれで
+// 複数本まとめて出す点が異なる。
+function spawnRadialLines(cx, cy, baseSize, spec) {
+  const count = spec.count || 10;
+  const length = spec.length || baseSize * 2.6;
+  const thickness = spec.thickness || 3;
+  const life = spec.life || 380;
+  const color = spec.color || 'rgba(255,255,255,0.9)';
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 * i) / count + (rand() - 0.5) * 0.3;
+    const el = document.createElement('div');
+    el.className = 'particle';
+    el.style.left = `${cx}px`;
+    el.style.top = `${cy - thickness / 2}px`;
+    el.style.width = `${length * (0.75 + rand() * 0.35)}px`;
+    el.style.height = `${thickness}px`;
+    el.style.background = color;
+    el.style.transformOrigin = 'left center';
+    el.style.setProperty('--line-rot', `${(angle * 180) / Math.PI}deg`);
+    el.style.animation = `particle-radial-line ${life}ms ease-out forwards`;
+    stage.appendChild(el);
+    trackParticle(el, life);
+  }
+}
+
+function spawnOneParticle(spec, cx, cy, baseSize, i) {
+  // 放射状(紙吹雪・効果線)は円周方向に、それ以外は上向き寄りの扇状にランダムに散らす
+  const isRadial = spec.shape === 'confetti' || spec.shape === 'streak';
+  const angle = isRadial ? rand() * Math.PI * 2 : (rand() - 0.5) * 1.6 - Math.PI / 2;
+  const spread = spec.spread || 30;
+  const dx = Math.cos(angle) * spread * (0.6 + rand() * 0.8);
+  const rise = isRadial ? 50 + rand() * 70 : spread * (1.1 + rand() * 0.7);
+
+  const el = document.createElement('div');
+  el.className = 'particle';
+  el.style.setProperty('--dx', `${dx}px`);
+  el.style.setProperty('--rise', `${rise}px`);
+  el.style.setProperty('--rot', `${(angle * 180) / Math.PI}deg`);
+
+  const startOffsetX = (rand() - 0.5) * baseSize * 0.5;
+  const startOffsetY = (rand() - 0.5) * baseSize * 0.3;
+  el.style.left = `${cx + startOffsetX}px`;
+  el.style.top = `${cy + startOffsetY}px`;
+
+  const life = spec.life || 900;
+  const driftKind = isRadial ? 'burst' : spec.drift;
+  const animName = DRIFT_ANIM[driftKind] || 'particle-up';
+  el.style.animation = `${animName} ${life}ms ease-out forwards`;
+
+  if (spec.shape === 'glyph') {
+    const glyphs = spec.glyphs || ['✨'];
+    el.textContent = glyphs[i % glyphs.length];
+    el.style.fontSize = `${Math.round(baseSize * 0.32)}px`;
+  } else if (spec.shape === 'dot') {
+    const dotSize = Math.max(4, Math.round(baseSize * 0.12));
+    el.style.width = `${dotSize}px`;
+    el.style.height = `${dotSize}px`;
+    el.style.borderRadius = '50%';
+    el.style.background = spec.color || '#fff';
+  } else if (spec.shape === 'streak') {
+    el.style.width = `${Math.round(baseSize * 0.38)}px`;
+    el.style.height = '3px';
+    el.style.borderRadius = '2px';
+    el.style.background = spec.color || 'rgba(255,255,255,0.85)';
+  } else if (spec.shape === 'confetti') {
+    el.style.width = `${5 + rand() * 4}px`;
+    el.style.height = `${8 + rand() * 6}px`;
+    el.style.background = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
+    el.style.borderRadius = '1px';
+  }
+
+  stage.appendChild(el);
+  trackParticle(el, life);
+}

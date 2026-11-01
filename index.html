@@ -60,6 +60,8 @@
         #player-wrapper { flex: 1; position: relative; background: #000; overflow: hidden; }
         #player { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
         #click-guard { position: absolute; inset: 0; z-index: 15; background: transparent; }
+        /* ★追加：ReaCastのリアクション演出（参加者の画面だけ。動画の枠の上に重ね、クリックは素通りさせる） */
+        #reacast-fx { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; z-index: 45; pointer-events: none; background: transparent; }
         #video-cover { position: absolute; inset: 0; background: radial-gradient(circle, #222 0%, #000 100%); z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 
         /* ★追加：正解時などに画面中央に出る大きな通知（スマホでも折り返せるようクラス化） */
@@ -1147,6 +1149,8 @@
             <button id="my-history-btn" onclick="showMyHistory()" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">履歴</button>
             <button id="rules-btn" onclick="showRulesModal()" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">ルール</button>
             <button id="theme-btn" title="画面のデザインを変える" style="background:#555; color:white; border:none; border-radius:25px; padding:10px 12px; cursor:pointer; margin: 0 5px;">🎨</button>
+            <!-- ★追加：ReaCastのリアクション演出の表示ON/OFF（ReaCastのリアクションが届いた時だけ出る） -->
+            <button id="reacast-toggle-btn" title="ReaCastのリアクション演出を表示する／しない" style="display:none; background:#555; color:white; border:none; border-radius:25px; padding:10px 12px; cursor:pointer; margin: 0 5px;">✨</button>
             <button id="exit-game-btn" onclick="exitGame()" style="background:#dc3545; color:white; border:none; border-radius:25px; padding:10px 15px; cursor:pointer; margin: 0 5px;">退出</button>
             <div class="volume-controls">
                 <span id="mute-btn" style="cursor:pointer;">🔈</span>
@@ -2230,6 +2234,24 @@ window.onYouTubeIframeAPIReady = () => {
             const now = Date.now();
             if (m.time && (now - m.time < 3000)) { window.lastProcessedReactionKey = key; showReactionBurst(m); }
         });
+
+        // ★追加：ReaCastのリアクション（ニンフィア(BOT)が中継）を、ReaCastと同じ演出で出す。主催者はReaCast本体で見えているので出さない
+        if (!isAdmin) {
+            onValue(ref(db, 'game/reacast_settings'), (snap) => { ReacastFx.setSettings(snap.val()); });
+            // 自分のPCの時計のずれ（Firebaseのサーバー時刻との差）を足して、古いものかどうかを判定する
+            let reacastClockOffset = 0;
+            onValue(ref(db, '.info/serverTimeOffset'), (snap) => { reacastClockOffset = Number(snap.val()) || 0; });
+            const reacastSeen = new Set();
+            onChildAdded(query(ref(db, 'game/reacast'), limitToLast(1)), (snap) => {
+                const m = snap.val();
+                // 一度出したもの・参加した時点で残っていた古いもの（消された後に繰り上がってきたもの含む）は出さない
+                if (!m || !m.time || reacastSeen.has(snap.key)) return;
+                reacastSeen.add(snap.key);
+                if (reacastSeen.size > 300) reacastSeen.delete(reacastSeen.values().next().value);
+                if (Date.now() + reacastClockOffset - m.time > 5000) return;
+                ReacastFx.play(m);
+            });
+        }
     }
 
     function normalize(t) { return t ? t.normalize("NFKC").replace(/[！!？?。．、，\s]/g, "").replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60)).toLowerCase() : ""; }
@@ -3636,6 +3658,91 @@ window.onYouTubeIframeAPIReady = () => {
         push(ref(db, 'game/reactions'), { userId: myId, user: myName, emoji, time: serverTimestamp() });
     };
 
+    // ★追加：ReaCastのリアクションを参加者の画面へ中継する書き込み口（ニンフィア(BOT)のゲーム画面から呼ばれる）
+    // 届いたものは15秒後に自分で消す（溜まり続けないように）
+    const REACAST_EMOJI_ID_RE = /^[a-zA-Z0-9_-]{1,32}$/;
+    window.relayReacastReaction = (m) => {
+        if (!m || !myId) return;
+        if (m.type === 'settings') {
+            const s = { userId: myId };
+            ['glyphScale', 'glyphOpacity', 'stageW', 'stageH'].forEach(k => { if (typeof m[k] === 'number' && isFinite(m[k])) s[k] = m[k]; });
+            if (typeof m.comboGrowthEnabled === 'boolean') s.comboGrowthEnabled = m.comboGrowthEnabled;
+            if (Array.isArray(m.noComboGrowthIds)) s.noComboGrowthIds = m.noComboGrowthIds.filter(x => typeof x === 'string' && REACAST_EMOJI_ID_RE.test(x)).slice(0, 100);
+            update(ref(db, 'game/reacast_settings'), s).catch(e => console.error('ReaCast設定の中継失敗:', e));
+            return;
+        }
+        if (typeof m.emoji !== 'string' || !REACAST_EMOJI_ID_RE.test(m.emoji)) return;
+        const r = push(ref(db, 'game/reacast'), {
+            userId: myId, emoji: m.emoji, mark: !!m.mark,
+            seed: (Number(m.seed) >>> 0), time: serverTimestamp()
+        });
+        r.catch(e => console.error('ReaCastリアクションの中継失敗:', e));
+        setTimeout(() => remove(r).catch(() => {}), 15000);
+    };
+
+    // ★追加：ReaCastの演出（assets/reacast/ にコピーしたReaCast本体の演出をそのまま使う）
+    // 最初のリアクションが届いた時に初めて読み込む（ReaCastを使わない日は何も読み込まない）
+    const ReacastFx = (() => {
+        const PREF_KEY = 'introdon_reacast_fx';
+        let enabled = true;
+        try { enabled = localStorage.getItem(PREF_KEY) !== 'off'; } catch (e) {}
+        let frame = null, ready = false, pending = [], settings = null;
+        const btn = document.getElementById('reacast-toggle-btn');
+        const paintBtn = () => {
+            if (!btn) return;
+            btn.style.opacity = enabled ? '1' : '0.45';
+            btn.title = enabled ? 'ReaCastのリアクション演出：表示中（押すと非表示）' : 'ReaCastのリアクション演出：非表示（押すと表示）';
+        };
+        const post = (msg) => { if (frame && ready) frame.contentWindow.postMessage(msg, location.origin); };
+        const sendSettings = () => {
+            // ReaCastの設定が届いていない時は、横長の画面と同じ見た目になるよう 1280×720 として描く
+            const s = settings || {};
+            post({ type: 'settings', stageW: s.stageW || 1280, stageH: s.stageH || 720,
+                ...(typeof s.glyphScale === 'number' ? { glyphScale: s.glyphScale } : {}),
+                ...(typeof s.glyphOpacity === 'number' ? { glyphOpacity: s.glyphOpacity } : {}),
+                ...(typeof s.comboGrowthEnabled === 'boolean' ? { comboGrowthEnabled: s.comboGrowthEnabled } : {}),
+                ...(Array.isArray(s.noComboGrowthIds) ? { noComboGrowthIds: s.noComboGrowthIds } : {}) });
+        };
+        const ensureFrame = () => {
+            if (frame) return;
+            const wrap = document.getElementById('player-wrapper');
+            if (!wrap) return;
+            frame = document.createElement('iframe');
+            frame.id = 'reacast-fx';
+            frame.setAttribute('aria-hidden', 'true');
+            frame.tabIndex = -1;
+            frame.addEventListener('load', () => {
+                ready = true;
+                sendSettings();
+                pending.forEach(post);
+                pending = [];
+            });
+            frame.src = 'assets/reacast/overlay.html';
+            wrap.appendChild(frame);
+        };
+        const setEnabled = (on) => {
+            enabled = on;
+            try { localStorage.setItem(PREF_KEY, on ? 'on' : 'off'); } catch (e) {}
+            paintBtn();
+            // 非表示にしたら演出ごと外して、PCに負担をかけない
+            if (!on && frame) { frame.remove(); frame = null; ready = false; pending = []; }
+        };
+        if (btn) btn.addEventListener('click', () => setEnabled(!enabled));
+        paintBtn();
+        return {
+            setSettings(s) { settings = s || null; sendSettings(); },
+            play(m) {
+                if (btn) btn.style.display = '';
+                if (!enabled) return;
+                ensureFrame();
+                // 届く時刻は人によってずれるので、ReaCastの「時刻合わせ」は使わずすぐ出す
+                const msg = { type: 'reaction', emoji: m.emoji, mark: !!m.mark, seed: m.seed >>> 0 };
+                if (ready) post(msg);
+                else if (pending.length < 20) pending.push(msg);
+            }
+        };
+    })();
+
     // ★追加：絵文字ごとの演出パターンの割り当て
     const REACTION_ANIM_MAP = {
         '💩': 'fall',
@@ -3920,6 +4027,7 @@ window.loadRandomFromReserve = loadRandomFromReserve; // 👈 この1行を足�
             await update(ref(db), {
                 'game/answers': null, 'game/results': null,
                 'admin/answers': null, 'admin/playLog': null, 'admin/roundState': null,
+                'game/reacast': null, 'game/reacast_settings': null,
                 'admin/userRoundState': null, 'admin/judged': null, 'admin/hiddenChats': null
             });
 
