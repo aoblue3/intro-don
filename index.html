@@ -6,7 +6,7 @@
     <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
     <title>INTRO DON! - Deluxe Edition</title>
     <!-- ★追加：入場画面（レトロ）とテーマ用のフォント -->
-    <link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=M+PLUS+Rounded+1c:wght@500;800&family=Orbitron:wght@700;900&family=Zen+Maru+Gothic:wght@500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=M+PLUS+Rounded+1c:wght@500;800&family=Orbitron:wght@700;900&family=DotGothic16&family=Zen+Maru+Gothic:wght@500;700&display=swap" rel="stylesheet">
     <style>
         :root { --primary-color: #007bff; --admin-color: #ff4757; --bg-color: #0f0f0f; --gold: #ffd700; --my-name-color: #00d4ff; --success-green: #28a745; }
         body { font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif; margin: 0; background: var(--bg-color); color: #fff; display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; }
@@ -223,69 +223,149 @@
             100% { background-position: 0% 50%; }
         }
 
-        /* ★追加：チャンスタイム演出オーバーレイ */
-        #chance-time-overlay {
-            position: fixed; inset: 0; z-index: 200000; display: none;
-            align-items: center; justify-content: center; overflow: hidden; pointer-events: none;
-        }
-        #ct-flash {
-            position: absolute; inset: 0; background: #000; opacity: 0;
-        }
-        /* ★修正：暗転はフェードアウトせず「保持」する（この後TVオフ演出→フリーズの間、真っ黒を維持するため） */
-        #ct-flash.play { opacity: 1; transition: opacity 0.08s ease-in; }
+        /* ★変更：チャンスタイム演出（3種類とも作り直し。部品はすべて #chance-fx の中に作る） */
+        /* ================================================================
+           演出の土台
+           ================================================================ */
+        #chance-fx { position: fixed; inset: 0; z-index: 200000; display: none; overflow: hidden; pointer-events: none; }
+        .fx-layer { position: absolute; inset: 0; }
+        .fx-black { position: absolute; inset: 0; background: #000; }
+        .fx-flash { position: absolute; inset: 0; mix-blend-mode: screen; }
+        .fx-noise { position: absolute; inset: -50%; opacity: .07; background-image: repeating-radial-gradient(circle at 17% 32%, #fff 0 1px, transparent 1px 3px), repeating-radial-gradient(circle at 73% 61%, #fff 0 1px, transparent 1px 4px); animation: fx-noise .18s steps(3) infinite; }
+        @keyframes fx-noise { 0% { transform: translate(0,0); } 33% { transform: translate(-3%,2%); } 66% { transform: translate(2%,-3%); } 100% { transform: translate(0,0); } }
+        .fx-scan { position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0,0,0,.28) 0 2px, transparent 2px 4px); mix-blend-mode: multiply; }
+        .fx-vignette { position: absolute; inset: 0; background: radial-gradient(ellipse at center, transparent 35%, rgba(0,0,0,.85) 100%); }
 
-        /* ★追加：ブラウン管テレビの電源を切る時のような、白い線が縦→点に収縮する演出 */
-        #ct-tvline {
-            position: absolute; left: 0; top: 50%; width: 100%; height: 100%;
-            background: #fff; opacity: 0;
-            transform: translateY(-50%) scaleY(1) scaleX(1);
-            box-shadow: 0 0 40px 10px rgba(255,255,255,0.8);
-        }
-        #ct-tvline.play { animation: ct-tv-off 0.55s cubic-bezier(.7,0,.84,0) forwards; }
-        @keyframes ct-tv-off {
-            0% { opacity: 1; transform: translateY(-50%) scaleY(1) scaleX(1); }
-            55% { opacity: 1; transform: translateY(-50%) scaleY(0.006) scaleX(1); box-shadow: 0 0 60px 15px rgba(255,255,255,0.9); }
-            80% { opacity: 1; transform: translateY(-50%) scaleY(0.006) scaleX(0.02); box-shadow: 0 0 20px 6px rgba(255,255,255,0.9); }
-            100% { opacity: 0; transform: translateY(-50%) scaleY(0.001) scaleX(0.001); box-shadow: none; }
-        }
+        /* ブラウン管が消える線 */
+        .fx-tvline { position: absolute; left: 0; top: 50%; width: 100%; height: 100%; background: #fff; transform: translateY(-50%); box-shadow: 0 0 40px 12px rgba(200,230,255,.9); }
+        .fx-tvdot { position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: #fff; box-shadow: 0 0 18px 8px rgba(190,220,255,.9); }
 
-        #ct-rays {
-            position: absolute; width: 220vmax; height: 220vmax;
-            background: conic-gradient(from 0deg, #ff0080, #ff8c00, #ffd700, #00e5ff, #7b2ff7, #ff0080);
-            opacity: 0; transform: scale(0) rotate(0deg);
-        }
-        @keyframes ct-rays-anim {
-            0% { opacity: 0; transform: scale(0) rotate(0deg); }
-            20% { opacity: 0.85; }
-            100% { opacity: 0.85; transform: scale(1) rotate(340deg); }
-        }
-        #ct-rays.play { animation: ct-rays-anim 3.2s cubic-bezier(.2,.8,.3,1) forwards; }
+        /* 衝撃波 */
+        .fx-ring { position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%; border: 6px solid rgba(255,255,255,.9); box-shadow: 0 0 30px rgba(255,255,255,.8), inset 0 0 20px rgba(255,255,255,.6); }
 
-        #ct-text { position: relative; text-align: center; opacity: 0; transform: scale(0.3); z-index: 2; }
-        #ct-text.play { animation: ct-text-anim 1.1s cubic-bezier(.34,1.56,.64,1) forwards; animation-delay: 0.5s; }
-        @keyframes ct-text-anim {
-            0% { opacity: 0; transform: scale(0.3) rotate(-8deg); }
-            60% { opacity: 1; transform: scale(1.3) rotate(4deg); }
-            80% { transform: scale(0.92) rotate(-2deg); }
-            100% { opacity: 1; transform: scale(1.05) rotate(0deg); }
-        }
-        .ct-line1 {
-            font-size: 4rem; font-weight: 900;
-            background: linear-gradient(90deg, #ff0080, #ff8c00, #ffd700, #00e5ff, #7b2ff7, #ff0080);
-            background-size: 300% 100%;
-            -webkit-background-clip: text; background-clip: text; color: transparent;
-            animation: ct-rainbow-text 1.5s linear infinite;
-            text-shadow: 0 0 30px rgba(255,255,255,0.5);
-            letter-spacing: 2px;
-        }
-        @keyframes ct-rainbow-text {
-            0% { background-position: 0% 50%; }
-            100% { background-position: 300% 50%; }
-        }
-        .ct-line2 {
-            font-size: 2.2rem; font-weight: bold; color: #fff; margin-top: 10px;
-            text-shadow: 0 0 20px gold, 0 0 40px gold;
-        }
+        /* ================================================================
+           仕上げ 案A：パチスロ実機風（金の立体文字＋集中線）
+           ================================================================ */
+        .tA { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .tA-bg { position: absolute; inset: 0; background: radial-gradient(circle at 50% 50%, #7a0710 0%, #3a0208 45%, #0b0002 100%); }
+        .tA-burst { position: absolute; left: 50%; top: 50%; width: 260vmax; height: 260vmax; transform: translate(-50%,-50%); }
+        .tA-burst-spin { position: absolute; inset: 0; border-radius: 50%; animation: tA-spin 22s linear infinite;
+            background: repeating-conic-gradient(from 0deg, rgba(255,200,60,.38) 0deg 4deg, rgba(255,120,0,0) 4deg 12deg);
+            -webkit-mask: radial-gradient(circle, transparent 4%, #000 12%, #000 30%, transparent 50%); mask: radial-gradient(circle, transparent 4%, #000 12%, #000 30%, transparent 50%); }
+        @keyframes tA-spin { to { transform: rotate(360deg); } }
+        .tA-word { position: relative; font-family: 'Dela Gothic One', sans-serif; font-size: clamp(42px, 10.5vw, 150px); line-height: 1.1; white-space: nowrap; letter-spacing: .02em; }
+        .tA-word span { display: block; }
+        .tA-stroke { position: absolute; inset: 0; color: #4a0000; -webkit-text-stroke: .2em #4a0000; paint-order: stroke fill;
+            text-shadow: 0 .06em 0 #2a0000, 0 .1em 0 #1a0000, 0 .18em .3em rgba(0,0,0,.8); }
+        .tA-fill { position: relative; color: transparent; -webkit-text-stroke: .025em #fff3b0;
+            background: linear-gradient(180deg, #fffbe0 0%, #ffe066 30%, #f0a400 50%, #ffd23f 62%, #fff2a8 80%, #c47800 100%);
+            -webkit-background-clip: text; background-clip: text; }
+        .tA-shine { position: absolute; inset: 0; color: transparent;
+            background: linear-gradient(105deg, transparent 40%, rgba(255,255,255,.95) 50%, transparent 60%); background-size: 300% 100%; background-position: 150% 0;
+            -webkit-background-clip: text; background-clip: text; animation: tA-shine 1.8s ease-in-out .5s infinite; }
+        @keyframes tA-shine { 0% { background-position: 150% 0; } 55%, 100% { background-position: -50% 0; } }
+        .tA-sub { position: relative; margin-top: .3em; display: flex; align-items: center; gap: .35em; font-size: clamp(22px, 4.6vw, 64px);
+            padding: .08em .6em .12em; transform: skewX(-12deg); background: linear-gradient(180deg, #ff3448, #b0001a); border: .08em solid #ffd84a; border-radius: .18em;
+            box-shadow: 0 .12em 0 #4a0000, 0 0 .6em rgba(255,60,60,.6); }
+        .tA-sub span { font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: .6em; letter-spacing: .12em; color: #fff; }
+        .tA-sub b { font-family: 'Orbitron', sans-serif; font-weight: 900; color: #fff3a0; text-shadow: 0 0 .3em #ffcc00; animation: tA-x2 .9s ease-in-out infinite; display: inline-block; }
+        @keyframes tA-x2 { 0%,100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+        .tA-breathe { animation: tA-breathe 2.4s ease-in-out infinite; }
+        @keyframes tA-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.025); } }
+        .tA-star { position: absolute; width: 22px; height: 22px; background: #fff; clip-path: polygon(50% 0, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0 50%, 40% 40%); filter: drop-shadow(0 0 6px #ffe680); animation: tA-twinkle 1.1s ease-in-out infinite; }
+        @keyframes tA-twinkle { 0%,100% { transform: scale(0) rotate(0deg); opacity: 0; } 50% { transform: scale(1) rotate(45deg); opacity: 1; } }
+
+        /* ================================================================
+           フリーズ（グリッチ→割れる→炎→リール）
+           ================================================================ */
+        .gl { position: relative; display: inline-block; animation: gl-jit .1s steps(2) infinite; }
+        .gl::before, .gl::after { content: attr(data-text); position: absolute; left: 0; top: 0; width: 100%; mix-blend-mode: screen; }
+        .gl::before { color: #ff2a4f; animation: gl-a .4s steps(4) infinite; }
+        .gl::after { color: #22f3ff; animation: gl-b .35s steps(4) infinite; }
+        .gl.gl-hard { animation: gl-jit-hard .08s steps(2) infinite; }
+        .gl.gl-hard::before { animation-duration: .2s; }
+        .gl.gl-hard::after { animation-duration: .18s; }
+        @keyframes gl-jit { 0% { transform: translate(0,0); } 50% { transform: translate(-1px,1px) skewX(-2deg); } }
+        @keyframes gl-jit-hard { 0% { transform: translate(-4px,1px) skewX(-6deg); } 50% { transform: translate(5px,-2px) skewX(4deg); } }
+        @keyframes gl-a { 0% { clip-path: inset(10% 0 70% 0); transform: translate(-4px,0); } 25% { clip-path: inset(60% 0 5% 0); transform: translate(5px,0); } 50% { clip-path: inset(25% 0 50% 0); transform: translate(-6px,0); } 75% { clip-path: inset(80% 0 2% 0); transform: translate(3px,0); } 100% { clip-path: inset(40% 0 35% 0); transform: translate(-4px,0); } }
+        @keyframes gl-b { 0% { clip-path: inset(70% 0 10% 0); transform: translate(4px,0); } 25% { clip-path: inset(5% 0 62% 0); transform: translate(-5px,0); } 50% { clip-path: inset(48% 0 22% 0); transform: translate(6px,0); } 75% { clip-path: inset(2% 0 80% 0); transform: translate(-3px,0); } 100% { clip-path: inset(30% 0 42% 0); transform: translate(4px,0); } }
+        .fx-glbar { position: absolute; left: 0; width: 100%; mix-blend-mode: screen; }
+
+        .fx-crack { position: absolute; }
+        .fx-crack svg { width: 100%; height: 100%; display: block; overflow: visible; }
+        .fx-crack path { fill: none; stroke: #fff; stroke-width: 2.2; stroke-linejoin: bevel; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 3px #fff) drop-shadow(0 0 8px rgba(160,220,255,.9)); }
+        .fx-shards { position: absolute; perspective: 900px; }
+        .fx-shard { position: absolute; inset: 0; overflow: hidden; will-change: transform, opacity; }
+        .fx-shard > .clone { position: absolute; inset: 0; }
+        .fx-shard > .glare { position: absolute; inset: 0; }
+
+        .fx-fire { position: absolute; inset: 0; background: radial-gradient(ellipse 120% 70% at 50% 110%, #ff5a00 0%, #a01500 22%, #3d0300 50%, #0a0000 80%); }
+        .fx-flame { position: absolute; bottom: -12%; width: 34vw; height: 70vh; margin-left: -17vw; border-radius: 50% 50% 40% 40% / 70% 70% 30% 30%;
+            background: radial-gradient(ellipse 45% 60% at 50% 80%, rgba(255,240,170,.95) 0%, rgba(255,170,30,.85) 25%, rgba(255,70,0,.55) 50%, rgba(160,10,0,0) 72%);
+            filter: blur(14px); mix-blend-mode: screen; transform-origin: 50% 100%; animation: fx-flicker 1s ease-in-out infinite alternate; }
+        @keyframes fx-flicker { 0% { transform: scale(1, .85) skewX(-4deg); opacity: .75; } 35% { transform: scale(.92, 1.08) skewX(3deg); opacity: 1; } 70% { transform: scale(1.06, .95) skewX(-2deg); opacity: .85; } 100% { transform: scale(.97, 1.12) skewX(5deg); opacity: 1; } }
+        .fx-ember { position: absolute; bottom: -10px; width: 3px; height: 3px; border-radius: 50%; background: #fff6c8; box-shadow: 0 0 6px 2px #ffae00, 0 0 14px 4px rgba(255,80,0,.6); }
+        .fx-heat { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.75) 0%, transparent 40%); }
+
+        .fx-reel-strip { will-change: transform; }
+        /* ================================================================
+           宝箱
+           ================================================================ */
+        .fx-pillar { position: absolute; left: 50%; bottom: 38%; width: 30px; height: 0; transform: translateX(-50%); border-radius: 50% 50% 0 0;
+            background: linear-gradient(0deg, #fff 0%, rgba(255,245,200,.9) 30%, rgba(255,215,80,.4) 70%, transparent 100%); filter: blur(4px); }
+        .fx-coin { position: absolute; width: 18px; height: 18px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fffbe0, #ffd23f 45%, #b37400 100%); box-shadow: 0 0 8px rgba(255,210,63,.8); }
+        .fx-spark { position: absolute; width: 5px; height: 5px; border-radius: 50%; }
+        /* ---- ① GODフリーズ風 ---- */
+        .tA-bg.gold { background: radial-gradient(circle at 50% 50%, #5a4100 0%, #2a1c00 45%, #050300 100%); }
+        .fx-godglow { position: absolute; left: 50%; top: 50%; width: 70vmin; height: 70vmin; margin: -35vmin 0 0 -35vmin; border-radius: 50%; background: radial-gradient(circle, rgba(255,230,140,.55) 0%, rgba(255,180,0,.18) 35%, transparent 65%); }
+        .fx-godglint { position: absolute; left: 50%; top: 50%; width: 120px; height: 120px; margin: -60px 0 0 -60px; background: #fff8d8; clip-path: polygon(50% 0, 54% 46%, 100% 50%, 54% 54%, 50% 100%, 46% 54%, 0 50%, 46% 46%); filter: drop-shadow(0 0 12px #ffd23f); }
+        .fx-godbg { position: absolute; inset: 0; background: radial-gradient(circle at 50% 50%, #4a3500 0%, #1c1200 50%, #000 100%); }
+        .fx-emblem { position: absolute; left: 50%; top: 50%; width: clamp(180px, 42vmin, 420px); height: clamp(180px, 42vmin, 420px); transform-style: preserve-3d; }
+        .fx-emblem-ring { position: absolute; inset: 0; border-radius: 50%;
+            background: conic-gradient(from 0deg, #fff3b0, #c98a00, #ffe066, #8a5a00, #fff3b0, #c98a00, #ffe066, #8a5a00, #fff3b0);
+            box-shadow: 0 0 0 4px #2a1a00, 0 0 60px rgba(255,200,60,.8), inset 0 0 20px rgba(0,0,0,.5); }
+        .fx-emblem-face { position: absolute; inset: 9%; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            background: radial-gradient(circle at 40% 35%, #fff6c8 0%, #ffd23f 30%, #d08f00 65%, #7a4b00 100%); box-shadow: inset 0 0 0 4px #5a3a00, inset 0 -10px 30px rgba(0,0,0,.4); }
+        .fx-emblem-face span { font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: clamp(60px, 15vmin, 150px); color: #fff8d8; -webkit-text-stroke: .04em #5a3a00; paint-order: stroke fill; text-shadow: 0 .05em 0 #5a3a00, 0 0 .3em rgba(255,255,255,.6); }
+        .fx-emblem-idle .fx-emblem-ring { animation: tA-spin 6s linear infinite; }
+        .fx-goldmote { position: absolute; width: 5px; height: 5px; border-radius: 50%; background: #fff3b0; box-shadow: 0 0 8px 2px #ffc800; }
+
+        /* ---- ② ハーデス全回転風 ---- */
+        .fx-zen-frame { position: relative; overflow: hidden; border-bottom: 3px solid rgba(255,200,60,.35); box-sizing: border-box; background: radial-gradient(ellipse at 50% 50%, #5a1000 0%, #200300 60%, #080000 100%); }
+        .fx-zen-art { position: absolute; top: 0; display: flex; align-items: center; justify-content: center; font-family: 'Dela Gothic One', sans-serif; white-space: nowrap; letter-spacing: .1em;
+            color: transparent; background: linear-gradient(180deg, #fffbe0 10%, #ffd23f 40%, #ff6a00 70%, #b81000 95%); -webkit-background-clip: text; background-clip: text; }
+        .fx-zen-art.dim { opacity: .75; filter: saturate(.7); }
+        .fx-zen-band { position: absolute; left: 0; right: 0; top: 50%; height: clamp(150px, 46vh, 420px); transform: translateY(-50%); overflow: hidden;
+            -webkit-mask: linear-gradient(180deg, transparent 0%, #000 20%, #000 80%, transparent 100%); mask: linear-gradient(180deg, transparent 0%, #000 20%, #000 80%, transparent 100%); }
+        .fx-zen-band .fx-zen-frame { border-bottom: 0; background: linear-gradient(180deg, rgba(20,0,0,0) 0%, rgba(40,4,0,.75) 50%, rgba(20,0,0,0) 100%); }
+        .fx-zen-art.win { background-image: linear-gradient(180deg, #ffffff 5%, #fff3a0 30%, #ffd23f 55%, #ff8a00 85%); filter: drop-shadow(0 0 18px rgba(255,200,60,.8)); }
+        .fx-zen-glow { position: absolute; inset: 0; opacity: 0; pointer-events: none; background: radial-gradient(ellipse 60% 50% at 50% 50%, rgba(255,230,140,.55), transparent 70%); }
+
+        /* ---- ③ ヴァンサバ宝箱風 ---- */
+        .fx-vsbg { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 65%, #1b1438 0%, #0b0820 60%, #020108 100%); }
+        .fx-vsrays { position: absolute; left: 50%; top: 66%; width: 240vmax; height: 240vmax; transform: translate(-50%,-50%); opacity: 0; }
+        .fx-vsrays-spin { position: absolute; inset: 0; border-radius: 50%; animation: tA-spin 14s linear infinite;
+            background: repeating-conic-gradient(from 0deg, rgba(255,77,109,.55) 0 5deg, transparent 5deg 12deg, rgba(255,210,63,.55) 12deg 17deg, transparent 17deg 24deg, rgba(109,255,122,.5) 24deg 29deg, transparent 29deg 36deg, rgba(77,210,255,.55) 36deg 41deg, transparent 41deg 48deg, rgba(199,125,255,.55) 48deg 53deg, transparent 53deg 60deg);
+            -webkit-mask: radial-gradient(circle, #000 0%, rgba(0,0,0,.7) 15%, transparent 40%); mask: radial-gradient(circle, #000 0%, rgba(0,0,0,.7) 15%, transparent 40%); }
+        .fx-pxchest { position: absolute; left: 50%; top: 52%; width: clamp(120px, 20vw, 220px); transform: translate(-50%, 0); image-rendering: pixelated; }
+        .fx-pxchest svg { display: block; width: 100%; height: auto; }
+        .fx-pxlid { position: relative; z-index: 1; transform-origin: 20% 100%; }
+        .fx-pxbody { position: relative; margin-top: -1px; }
+        .fx-pxleak { position: absolute; left: 6%; right: 6%; top: 42%; height: 8px; background: #fff8d0; box-shadow: 0 0 14px 5px #ffd84a, 0 0 50px 14px rgba(255,200,60,.6); opacity: 0; z-index: 2; }
+        .fx-pxcoin { width: 16px; height: 16px; border-radius: 0; background: #ffd23f; box-shadow: inset -3px -3px 0 #b37400, inset 3px 3px 0 #fff3a0, 0 0 0 2px #5a3a00; }
+        .fx-pxspark { position: absolute; width: 6px; height: 6px; }
+        .fx-vscounter { position: absolute; left: 50%; bottom: 3%; font-family: 'DotGothic16', monospace; font-size: clamp(22px, 4vw, 44px); color: #ffd23f; text-shadow: 3px 3px 0 #5a3a00; letter-spacing: .05em; white-space: nowrap; }
+        .fx-vscounter small { color: #fff; font-size: .6em; }
+        .fx-vsslots { position: absolute; left: 50%; top: 14%; display: flex; gap: clamp(6px, 1.4vw, 16px); transform: translateX(-50%); }
+        .fx-vsslot { width: clamp(56px, 12vw, 120px); height: clamp(56px, 12vw, 120px); display: flex; align-items: center; justify-content: center;
+            background: #120c24; border: 4px solid #8a8fa8; box-shadow: 0 0 0 4px #000, inset 0 0 0 3px #2b2346; image-rendering: pixelated; }
+        .fx-vsslot.hit { border-color: #ffd23f; background: radial-gradient(circle, #5a4100, #1c1200); box-shadow: 0 0 0 4px #000, 0 0 24px rgba(255,210,63,.8); }
+        .fx-vsslot-in { font-family: 'DotGothic16', monospace; font-size: clamp(30px, 6.5vw, 66px); line-height: 1; }
+        .fx-vsslot-in.hit { font-family: 'Dela Gothic One', sans-serif; color: #ffe066; -webkit-text-stroke: .12em #4a0000; paint-order: stroke fill; text-shadow: 0 .08em 0 #2a0000; }
+        .fx-vsslot-in.hit.two { font-size: clamp(20px, 4.2vw, 44px); letter-spacing: -.05em; }
+
+        /* 紙吹雪 */
+        .fx-confetti { position: fixed; top: 0; left: 0; z-index: 200010; pointer-events: none; will-change: transform, opacity; }
 
         /* ★追加：2倍ラウンド中、映像エリアを金色に縁取って常時アピール */
         @keyframes double-border-glow {
@@ -303,262 +383,6 @@
             background-size: 200% 100%; animation: chance-btn-gradient 1.5s linear infinite;
             color: #000; font-weight: 900; padding: 6px 18px; border-radius: 20px;
             font-size: 0.95rem; z-index: 95; display: none; box-shadow: 0 0 20px gold;
-        }
-
-        /* ★追加：チャンスタイム新演出「フリーズ」用スタイル一式 */
-
-        /* ①ROUND/READY?文字のグリッチ演出 */
-        @keyframes hades-glitch-jitter {
-            0%, 100% { transform: translate(0,0); }
-            20% { transform: translate(-2px, 1px); }
-            40% { transform: translate(2px, -1px); }
-            60% { transform: translate(-1px, 2px); }
-            80% { transform: translate(1px, -2px); }
-        }
-        @keyframes hades-glitch-slice-a {
-            0% { clip-path: inset(10% 0 70% 0); transform: translate(-3px,0); }
-            25% { clip-path: inset(60% 0 5% 0); transform: translate(3px,0); }
-            50% { clip-path: inset(20% 0 50% 0); transform: translate(-2px,0); }
-            75% { clip-path: inset(80% 0 2% 0); transform: translate(2px,0); }
-            100% { clip-path: inset(40% 0 30% 0); transform: translate(-3px,0); }
-        }
-        @keyframes hades-glitch-slice-b {
-            0% { clip-path: inset(70% 0 10% 0); transform: translate(3px,0); }
-            25% { clip-path: inset(5% 0 60% 0); transform: translate(-3px,0); }
-            50% { clip-path: inset(50% 0 20% 0); transform: translate(2px,0); }
-            75% { clip-path: inset(2% 0 80% 0); transform: translate(-2px,0); }
-            100% { clip-path: inset(30% 0 40% 0); transform: translate(3px,0); }
-        }
-        .hades-glitch-active {
-            position: relative; display: inline-block;
-            animation: hades-glitch-jitter 0.15s infinite;
-        }
-        .hades-glitch-active::before, .hades-glitch-active::after {
-            content: attr(data-glitch-text);
-            position: absolute; left: 0; top: 0; width: 100%; z-index: 1;
-        }
-        .hades-glitch-active::before {
-            color: #ff003c; mix-blend-mode: screen;
-            animation: hades-glitch-slice-a 0.5s infinite linear;
-        }
-        .hades-glitch-active::after {
-            color: #00fff9; mix-blend-mode: screen;
-            animation: hades-glitch-slice-b 0.45s infinite linear;
-        }
-
-        /* ②③④ フリーズ演出オーバーレイ全体 */
-        #hades-effect-overlay {
-            position: fixed; inset: 0; z-index: 200000; display: none;
-            align-items: center; justify-content: center; overflow: hidden; pointer-events: none;
-        }
-        #hades-shatter-flash {
-            position: absolute; inset: 0; background: #fff; opacity: 0;
-        }
-        @keyframes hades-flash-anim {
-            0% { opacity: 0; } 8% { opacity: 1; } 30% { opacity: 0.9; } 100% { opacity: 0; }
-        }
-        #hades-shatter-flash.play { animation: hades-flash-anim 0.5s ease-out forwards; }
-
-        /* ★追加：割れた瞬間の衝撃波リング（奥へ突き抜けるような勢いを出す） */
-        #hades-shockwave {
-            position: absolute; width: 10px; height: 10px; border-radius: 50%;
-            border: 10px solid #fff; opacity: 0; box-shadow: 0 0 30px #fff;
-        }
-        #hades-shockwave.play { animation: hades-shockwave-anim 0.65s ease-out forwards; }
-        @keyframes hades-shockwave-anim {
-            0% { width: 10px; height: 10px; opacity: 1; border-width: 14px; }
-            100% { width: 260vmax; height: 260vmax; opacity: 0; border-width: 0px; }
-        }
-
-        #hades-crack-svg {
-            position: absolute; width: 140vmax; height: 140vmax; opacity: 0;
-        }
-        #hades-crack-svg .hades-crack-line {
-            fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round;
-            filter: drop-shadow(0 0 6px #fff);
-        }
-        /* ★修正：奥の画面へ突き抜けるように、より大きく・速くズームさせる */
-        #hades-crack-svg.play { animation: hades-crack-fade 0.9s cubic-bezier(.3,0,.7,1) forwards; }
-        @keyframes hades-crack-fade {
-            0% { opacity: 0; transform: scale(0.6); }
-            10% { opacity: 1; transform: scale(1.0); }
-            30% { opacity: 1; transform: scale(1.5); }
-            100% { opacity: 0; transform: scale(3.2); }
-        }
-
-        #hades-fire-bg {
-            position: absolute; inset: -10%; opacity: 0; overflow: hidden;
-            /* ★修正：背景はほんのり熱気を感じる暗めのベースだけにし、炎の形は粒子側で作る */
-            background: radial-gradient(circle at 50% 100%, #4a0000 0%, #2a0000 35%, #0d0000 70%, #000 100%);
-        }
-        #hades-fire-bg.play { animation: hades-fire-in 0.5s ease-out forwards; }
-        @keyframes hades-fire-in { 0% { opacity: 0; } 100% { opacity: 1; } }
-
-        /* ★修正：炎の粒（火の粉）を連続生成して立ち上らせることで、よりリアルな炎の質感を出す */
-        .hades-fire-particle {
-            position: absolute; bottom: -5%; border-radius: 50%;
-            filter: blur(7px);
-            mix-blend-mode: screen;
-            pointer-events: none;
-            will-change: transform, opacity;
-        }
-
-        /* ★修正：画面いっぱいに映る大きなスロットリールに変更 */
-        #hades-reel-container {
-            position: relative; z-index: 2; display: flex; gap: 3vw; opacity: 0;
-        }
-        #hades-reel-container.play { opacity: 1; transition: opacity 0.2s ease; }
-        .hades-reel {
-            width: 24vw; max-width: 260px; height: 46vh; max-height: 420px;
-            overflow: hidden; border-radius: 16px;
-            background: rgba(0,0,0,0.55); border: 5px solid var(--gold);
-            box-shadow: 0 0 40px rgba(255,215,0,0.7), inset 0 0 30px rgba(0,0,0,0.6);
-        }
-        .hades-reel-strip { will-change: transform; }
-        .hades-reel-char {
-            width: 24vw; max-width: 260px; height: 46vh; max-height: 420px;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 7rem; font-weight: 900; color: #fff;
-            text-shadow: 0 0 14px #ff5722, 0 0 28px #ff0000;
-        }
-
-        #hades-final-text {
-            position: absolute; text-align: center; opacity: 0; transform: scale(0.4); z-index: 3;
-        }
-        #hades-final-text.play {
-            animation: ct-text-anim 1s cubic-bezier(.34,1.56,.64,1) forwards;
-        }
-
-        /* ================================================================
-           ★追加：チャンスタイム新演出「宝箱大当たり」用スタイル一式
-           ================================================================ */
-        #chest-effect-overlay {
-            position: fixed; inset: 0; z-index: 200000; display: none;
-            align-items: center; justify-content: center; overflow: hidden; pointer-events: none;
-        }
-
-        /* 宝箱本体（CSSだけで箱＋ふたを作る） */
-        #chest-graphic {
-            position: absolute; top: -40%; left: 50%; transform: translateX(-50%);
-            width: 160px; height: 140px; z-index: 3;
-        }
-        #chest-graphic.drop {
-            animation: chest-drop-fall 2.2s cubic-bezier(.6,.04,.98,.34) forwards;
-        }
-        @keyframes chest-drop-fall {
-            0% { top: -40%; transform: translateX(-50%) rotate(-6deg); }
-            70% { top: 54%; transform: translateX(-50%) rotate(4deg); }
-            82% { top: 50%; transform: translateX(-50%) rotate(-3deg); }
-            91% { top: 53%; transform: translateX(-50%) rotate(2deg); }
-            100% { top: 52%; transform: translateX(-50%) rotate(0deg); }
-        }
-        #chest-body {
-            position: absolute; bottom: 0; width: 100%; height: 78px;
-            background: linear-gradient(180deg, #a1662f 0%, #7a4a1f 60%, #5c3615 100%);
-            border: 4px solid #3d2410; border-radius: 0 0 14px 14px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.6);
-        }
-        #chest-lock {
-            position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
-            width: 26px; height: 26px; border-radius: 50%;
-            background: radial-gradient(circle at 35% 35%, #ffe57f, #c79a1e 70%, #8a6100 100%);
-            border: 2px solid #5c3615; box-shadow: 0 0 10px rgba(255,215,0,0.7);
-        }
-        #chest-lid {
-            position: absolute; top: 6px; width: 100%; height: 46px;
-            background: linear-gradient(180deg, #c98a3f 0%, #9c6425 100%);
-            border: 4px solid #3d2410; border-radius: 16px 16px 6px 6px;
-            transform-origin: bottom center; transform: rotateX(0deg);
-            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-        }
-        #chest-lid.open {
-            animation: chest-lid-open 0.35s ease-in forwards;
-        }
-        @keyframes chest-lid-open {
-            0% { transform: rotateX(0deg) translateY(0); }
-            100% { transform: rotateX(-125deg) translateY(-10px); }
-        }
-        #chest-graphic.shake { animation: chest-body-shake 0.3s ease-in-out; }
-        @keyframes chest-body-shake {
-            0%, 100% { margin-left: 0; }
-            25% { margin-left: -6px; }
-            75% { margin-left: 6px; }
-        }
-
-        /* 開いた瞬間の光の爆発 */
-        #chest-light-burst {
-            position: absolute; left: 50%; top: 50%; width: 10px; height: 10px;
-            border-radius: 50%; transform: translate(-50%, -50%);
-            background: radial-gradient(circle, #fff 0%, #fff9c4 25%, #ffd700 55%, transparent 75%);
-            opacity: 0; z-index: 2;
-        }
-        #chest-light-burst.play {
-            animation: chest-burst-grow 0.6s ease-out forwards;
-        }
-        @keyframes chest-burst-grow {
-            0% { width: 10px; height: 10px; opacity: 0; }
-            15% { opacity: 1; }
-            100% { width: 180vmax; height: 180vmax; opacity: 0; }
-        }
-        #chest-rays {
-            position: absolute; left: 50%; top: 50%; width: 160vmax; height: 160vmax;
-            transform: translate(-50%, -50%) scale(0) rotate(0deg);
-            background: conic-gradient(from 0deg, #ffd700, #fff9c4, #ffd700, #ff9800, #ffd700, #fff9c4, #ffd700);
-            opacity: 0; z-index: 1;
-        }
-        #chest-rays.play {
-            animation: chest-rays-spin 3.5s ease-out forwards;
-        }
-        @keyframes chest-rays-spin {
-            0% { opacity: 0; transform: translate(-50%, -50%) scale(0) rotate(0deg); }
-            10% { opacity: 0.85; }
-            100% { opacity: 0.6; transform: translate(-50%, -50%) scale(1) rotate(180deg); }
-        }
-
-        /* ★追加：宝箱から扇状に伸びる3本の光の線 */
-        #chest-beam-container {
-            position: absolute; left: 50%; top: 52%; width: 0; height: 0; z-index: 2;
-        }
-        .chest-beam {
-            position: absolute; left: 0; bottom: 0; width: 70px; height: 0;
-            background: linear-gradient(180deg, #ffffff 0%, #fff9c4 25%, rgba(255,215,0,0.6) 55%, transparent 100%);
-            transform-origin: bottom center;
-            filter: blur(1.5px);
-            opacity: 0;
-            box-shadow: 0 0 30px 10px rgba(255,235,150,0.5);
-        }
-        .chest-beam.play {
-            animation: chest-beam-shoot 1s cubic-bezier(.15,.7,.25,1) forwards;
-        }
-        @keyframes chest-beam-shoot {
-            0% { height: 0; opacity: 0; }
-            12% { opacity: 1; }
-            100% { height: 140vh; opacity: 0.9; }
-        }
-
-        /* チャ・ン・ス・タイ・ムの文字が宝箱から飛び出てくる */
-        #chest-letters {
-            position: relative; z-index: 4; display: flex; gap: 2.5vw;
-        }
-        .chest-letter {
-            font-size: 4.2rem; font-weight: 900; color: #fff;
-            text-shadow: 0 0 12px #ffd700, 0 0 24px #ff9800, 3px 3px 0 #7a4a1f;
-            opacity: 0; transform: scale(0.2) translateY(40px);
-        }
-        .chest-letter.pop {
-            animation: chest-letter-pop 0.6s cubic-bezier(.34,1.56,.64,1) forwards;
-        }
-        @keyframes chest-letter-pop {
-            0% { opacity: 0; transform: scale(0.2) translateY(40px) rotate(-15deg); }
-            60% { opacity: 1; transform: scale(1.3) translateY(-10px) rotate(6deg); }
-            100% { opacity: 1; transform: scale(1) translateY(0) rotate(0deg); }
-        }
-
-        #chest-final-text {
-            position: absolute; text-align: center; opacity: 0; transform: scale(0.4); z-index: 5;
-        }
-        #chest-final-text.play {
-            animation: ct-text-anim 1s cubic-bezier(.34,1.56,.64,1) forwards;
         }
 
         /* ★追加：最終結果の特別称号 */
@@ -796,8 +620,6 @@
             #ready-text { font-size: 1.6rem !important; letter-spacing: 3px !important; }
 
             /* ★追加：チャンスタイム演出の文字がはみ出さないよう縮小 */
-            .ct-line1 { font-size: 2rem; letter-spacing: 1px; }
-            .ct-line2 { font-size: 1.2rem; }
 
             /* ★追加：正解時の中央通知（正解！○○ptなど）が画面からはみ出さないよう折り返し・縮小 */
             .center-notify {
@@ -1358,75 +1180,8 @@
     </div>
 </div>
 
-<!-- ★追加：チャンスタイム演出用オーバーレイ -->
-<div id="chance-time-overlay">
-    <div id="ct-flash"></div>
-    <div id="ct-tvline"></div>
-    <div id="ct-rays"></div>
-    <div id="ct-text">
-        <div class="ct-line1">🎰 チャンスタイム！！ 🎰</div>
-        <div class="ct-line2">ポイント2倍発生！！</div>
-    </div>
-</div>
-
-<!-- ★追加：チャンスタイム新演出「フリーズ」用オーバーレイ -->
-<div id="hades-effect-overlay">
-    <div id="hades-shatter-flash"></div>
-    <div id="hades-shockwave"></div>
-    <svg id="hades-crack-svg" viewBox="0 0 400 400" preserveAspectRatio="none">
-        <path class="hades-crack-line" d="M200,200 L60,40" />
-        <path class="hades-crack-line" d="M200,200 L340,30" />
-        <path class="hades-crack-line" d="M200,200 L370,180" />
-        <path class="hades-crack-line" d="M200,200 L360,340" />
-        <path class="hades-crack-line" d="M200,200 L220,390" />
-        <path class="hades-crack-line" d="M200,200 L40,370" />
-        <path class="hades-crack-line" d="M200,200 L20,200" />
-        <path class="hades-crack-line" d="M200,200 L30,60" />
-        <path class="hades-crack-line" d="M120,120 L90,30" />
-        <path class="hades-crack-line" d="M280,130 L360,80" />
-        <path class="hades-crack-line" d="M280,270 L370,300" />
-        <path class="hades-crack-line" d="M130,280 L80,360" />
-    </svg>
-    <div id="hades-fire-bg"></div>
-    <div id="hades-reel-container">
-        <div class="hades-reel"><div class="hades-reel-strip"></div></div>
-        <div class="hades-reel"><div class="hades-reel-strip"></div></div>
-        <div class="hades-reel"><div class="hades-reel-strip"></div></div>
-    </div>
-    <div id="hades-final-text">
-        <div class="ct-line1">🔥 チャンスタイム！！ 🔥</div>
-        <div class="ct-line2">ポイント2倍発生！！</div>
-    </div>
-</div>
-
-<!-- ★追加：チャンスタイム新演出「宝箱大当たり」用オーバーレイ -->
-<div id="chest-effect-overlay">
-    <div id="chest-graphic">
-        <div id="chest-lid"></div>
-        <div id="chest-body">
-            <div id="chest-lock"></div>
-        </div>
-    </div>
-    <div id="chest-light-burst"></div>
-    <div id="chest-rays"></div>
-    <!-- ★追加：宝箱から扇状に伸びる3本の光の線 -->
-    <div id="chest-beam-container">
-        <div class="chest-beam" style="transform: translateX(-50%) rotate(-28deg);"></div>
-        <div class="chest-beam" style="transform: translateX(-50%) rotate(0deg);"></div>
-        <div class="chest-beam" style="transform: translateX(-50%) rotate(28deg);"></div>
-    </div>
-    <div id="chest-letters">
-        <span class="chest-letter">チャ</span>
-        <span class="chest-letter">ン</span>
-        <span class="chest-letter">ス</span>
-        <span class="chest-letter">タイ</span>
-        <span class="chest-letter">ム</span>
-    </div>
-    <div id="chest-final-text">
-        <div class="ct-line1">🎁 チャンスタイム！！ 🎁</div>
-        <div class="ct-line2">ポイント2倍発生！！</div>
-    </div>
-</div>
+<!-- ★変更：チャンスタイム演出の入れ物（中身は演出のたびに作って、終わったら消す） -->
+<div id="chance-fx"></div>
 
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
@@ -1491,8 +1246,9 @@
     let blindModeActive = false; // ★追加：ブラインドモード中はスコア・順位を隠す
     // ★追加：チャンスタイムの派手な演出（宝箱・フリーズ）が終わる予定時刻。0なら演出なし
     let chanceTimeEffectActiveUntil = 0;
-    // ★追加：各演出の「信号を送ってから見た目が終わるまで」のおおよその時間（ミリ秒）
-    const CHANCE_EFFECT_DURATIONS = { hades_freeze: 5950, chest_burst: 7350 };
+    // ★追加：各演出の「次の曲を読み込んでから見た目が終わるまで」の時間（ミリ秒）
+    // ★変更：演出を作り直して長くなったので更新（演出の長さ＋信号を送るまでの0.15秒＋余裕0.2秒）
+    const CHANCE_EFFECT_DURATIONS = { hades_freeze: 11650, chest_burst: 11350 };
     let lastVideoId = ""; 
     let isFirstPlayOfRound = true;
 
@@ -1839,7 +1595,8 @@ window.onYouTubeIframeAPIReady = () => {
 
                 // --- ここを追加：カウントダウン終了（READY?が消える）を待って表示 ---
                 // ★修正：チャンスタイムの派手な演出中なら、演出が終わるまで表示を遅らせる
-                const choiceRevealDelay = Math.max(5500, chanceTimeEffectActiveUntil - Date.now());
+                // ★修正：演出が終わってから「いつもどおり」（クイズ開始の4秒後）に出るよう、演出の残り時間＋4秒を待つ
+                const choiceRevealDelay = Math.max(5500, chanceTimeEffectActiveUntil - Date.now() + 4000);
                 setTimeout(() => {
                     if (quizInfo.isChoiceMode && choiceArea) {
                         choiceArea.style.display = 'grid'; // ★修正：flexのままだとグリッドレイアウトが上書きされてしまうため修正
@@ -3243,319 +3000,490 @@ window.onYouTubeIframeAPIReady = () => {
         return chosen;
     }
 
-    // ★修正：既存演出（プチュン→TV収縮→虹色爆発）。演出名を明確化
-    function playClassicChanceEffect() {
-        const overlay = document.getElementById('chance-time-overlay');
-        const flash = document.getElementById('ct-flash');
-        const tvline = document.getElementById('ct-tvline');
-        const rays = document.getElementById('ct-rays');
-        const text = document.getElementById('ct-text');
-        if (!overlay || !flash || !tvline || !rays || !text) return;
-
-        overlay.style.display = 'flex';
-        // クラスを一度外して再度付け直すことでアニメーションを確実に最初から再生する
-        flash.classList.remove('play'); void flash.offsetWidth;
-        tvline.classList.remove('play'); void tvline.offsetWidth;
-
-        // ★追加：前のラウンドの動画が裏で流れっぱなしにならないよう、演出開始と同時に止める
-        try {
-            if (player && player.pauseVideo) player.pauseVideo();
-        } catch (e) {}
-
-        // ★Step1：ピチュン効果音 ＋ 昔のテレビを消すような収縮演出
-        playPichunSound();
-        flash.classList.add('play'); // 背後を真っ黒に固定
-        tvline.classList.add('play'); // 白い線が縦→点に収縮
-
-        // ★Step2：収縮完了後、真っ暗な画面でしばし溜める（フリーズ演出）
-        setTimeout(() => {
-            tvline.classList.remove('play');
-        }, 600);
-
-        // ★Step3：溜めが終わったら、虹色の光が大爆発＋テキスト＋紙吹雪
-        setTimeout(() => {
-            rays.classList.remove('play'); void rays.offsetWidth; rays.classList.add('play');
-            text.classList.remove('play'); void text.offsetWidth; text.classList.add('play');
-            if (typeof triggerConfetti === 'function') {
-                triggerConfetti();
-                setTimeout(() => triggerConfetti(), 300);
-                setTimeout(() => triggerConfetti(), 650);
-                setTimeout(() => triggerConfetti(), 1000);
-            }
-        }, 1300);
-
-        // ★Step4：演出終了、通常画面へ
-        setTimeout(() => {
-            overlay.style.display = 'none';
-            flash.classList.remove('play');
-            tvline.classList.remove('play');
-            rays.classList.remove('play');
-            text.classList.remove('play');
-        }, 4450);
-    }
-
-    // ★追加：新演出「アナザーゴッド風フリーズ」。ROUND/READY?画面にグリッチ→画面割れ→炎背景→スロットリール演出
-    function playHadesFreezeEffect() {
-        const roundText = document.getElementById('round-text');
-        const readyText = document.getElementById('ready-text');
-        const overlay = document.getElementById('hades-effect-overlay');
-        const shatterFlash = document.getElementById('hades-shatter-flash');
-        const shockwave = document.getElementById('hades-shockwave');
-        const crackSvg = document.getElementById('hades-crack-svg');
-        const fireBg = document.getElementById('hades-fire-bg');
-        const reelContainer = document.getElementById('hades-reel-container');
-        const finalText = document.getElementById('hades-final-text');
-        if (!overlay) return;
-
-        // ★Step1：ROUND/READY?の文字にグリッチノイズをかける（約2.5秒）
-        [roundText, readyText].forEach(el => {
-            if (!el) return;
-            el.setAttribute('data-glitch-text', el.textContent);
-            el.classList.add('hades-glitch-active');
-        });
-
-        // ★Step2：2.5秒後、突如画面が割れて奥へ突き抜ける演出
-        setTimeout(() => {
-            [roundText, readyText].forEach(el => { if (el) el.classList.remove('hades-glitch-active'); });
-
-            overlay.style.display = 'flex';
-            playGlassBreakSound();
-
-            shatterFlash.classList.remove('play'); void shatterFlash.offsetWidth; shatterFlash.classList.add('play');
-            shockwave.classList.remove('play'); void shockwave.offsetWidth; shockwave.classList.add('play');
-            crackSvg.classList.remove('play'); void crackSvg.offsetWidth; crackSvg.classList.add('play');
-
+    // ================================================================
+    // ★変更：チャンスタイム演出を3種類とも作り直し（元ネタに寄せた演出）
+    //   ① classic_tv   ：GODフリーズ風（プチュン → 無音の暗闇 → 落雷 → 黄金の×2メダル）全8.0秒
+    //   ② hades_freeze ：ハーデス全回転風（グリッチ → 画面が割れる → 炎 → 謎の文字が流れて「チャンス」で止まる）全11.3秒
+    //   ③ chest_burst  ：ヴァンサバ宝箱風（ドット絵の宝箱 → 虹色の光と金貨 → 5つの枠が回って「チャ・ン・ス・タイ・ム」）全11.0秒
+    //   部品は ChanceFx の中にまとめ、他の処理と名前がぶつからないようにしている
+    // ================================================================
+    const ChanceFx = (() => {
+        const fx = document.getElementById('chance-fx');
+        let runId = 0, timers = [], intervals = [];
+        const at = (ms, fn) => { const id = runId; timers.push(setTimeout(() => { if (id === runId) fn(); }, ms)); };
+        const every = (ms, fn) => { const h = setInterval(fn, ms); intervals.push(h); return h; };
+        const rand = (a, b) => a + Math.random() * (b - a);
+        function mk(tag, cls, parent = fx, css) {
+            const e = document.createElement(tag);
+            if (cls) e.className = cls;
+            if (css) Object.assign(e.style, css);
+            parent.appendChild(e);
+            return e;
+        }
+        function pauseGameVideo() {
             try { if (player && player.pauseVideo) player.pauseVideo(); } catch (e) {}
-
-            // ★Step3：炎の背景が広がる
-            setTimeout(() => {
-                fireBg.classList.remove('play'); void fireBg.offsetWidth; fireBg.classList.add('play');
-                startFireParticles();
-            }, 500);
-
-            // ★Step4：スロットリールが回転し、チャ・ン・スの順に止まる
-            setTimeout(() => {
-                reelContainer.classList.add('play');
-                spinHadesReel(reelContainer.children[0], 'チャ', 1300);
-                spinHadesReel(reelContainer.children[1], 'ン', 1900);
-                spinHadesReel(reelContainer.children[2], 'ス', 2500);
-            }, 1000);
-
-            // ★Step5：全リール停止後、大きく「チャンスタイム！！」＋紙吹雪
-            setTimeout(() => {
-                finalText.classList.remove('play'); void finalText.offsetWidth; finalText.classList.add('play');
-                if (typeof triggerConfetti === 'function') {
-                    triggerConfetti();
-                    setTimeout(() => triggerConfetti(), 300);
-                    setTimeout(() => triggerConfetti(), 650);
-                }
-            }, 3600);
-
-            // ★Step6：演出終了、通常画面へ
-            setTimeout(() => {
-                overlay.style.display = 'none';
-                shatterFlash.classList.remove('play');
-                shockwave.classList.remove('play');
-                crackSvg.classList.remove('play');
-                fireBg.classList.remove('play');
-                stopFireParticles();
-                reelContainer.classList.remove('play');
-                finalText.classList.remove('play');
-            }, 5800);
-        }, 2500);
-    }
-
-    // ★追加：スロットリール1本を回転させ、指定の文字で止める
-    function spinHadesReel(reelEl, finalChar, spinDuration) {
-        if (!reelEl) return;
-        const strip = reelEl.querySelector('.hades-reel-strip');
-        if (!strip) return;
-        const pool = ['チ', 'ン', 'タ', 'ス', 'ャ', 'ー', 'ム', '炎', '爆', '熱'];
-        const extraCount = 18;
-        const chars = [];
-        for (let i = 0; i < extraCount; i++) chars.push(pool[Math.floor(Math.random() * pool.length)]);
-        chars.push(finalChar);
-
-        strip.innerHTML = chars.map(c => `<div class="hades-reel-char">${c}</div>`).join('');
-        const reelHeight = reelEl.clientHeight || 110;
-        const totalHeight = reelHeight * (chars.length - 1);
-
-        strip.style.transition = 'none';
-        strip.style.transform = 'translateY(0px)';
-        void strip.offsetHeight; // 強制リフロー
-        strip.style.transition = `transform ${spinDuration}ms cubic-bezier(.15,.9,.3,1)`;
-        strip.style.transform = `translateY(-${totalHeight}px)`;
-    }
-
-    // ★追加：炎の粒（火の粉）を連続生成して立ち上らせる、リアル寄りの炎エフェクト
-    let hadesFireInterval = null;
-    function startFireParticles() {
-        const container = document.getElementById('hades-fire-bg');
-        if (!container) return;
-        const colors = ['#fff9c4', '#ffe082', '#ffca28', '#ff9800', '#ff6d00', '#ff3d00', '#e64a19'];
-
-        hadesFireInterval = setInterval(() => {
-            // 1回のtickで2〜4個の粒を生成し、密度のある炎の質感を作る
-            const spawnCount = 2 + Math.floor(Math.random() * 3);
-            for (let i = 0; i < spawnCount; i++) {
+        }
+        function resetFx() {
+            runId++;
+            timers.forEach(clearTimeout); timers = [];
+            intervals.forEach(clearInterval); intervals = [];
+            fx.getAnimations({ subtree: true }).forEach(a => a.cancel());
+            fx.innerHTML = '';
+            fx.style.display = 'none';
+            document.querySelectorAll('.fx-confetti').forEach(e => e.remove());
+            ['round-text', 'ready-text'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.remove('gl', 'gl-hard'); });
+            const cover = document.getElementById('video-cover'); if (cover) cover.style.visibility = '';
+        }
+        function startFx() { resetFx(); fx.style.display = 'block'; }
+        function endFx(totalMs, fadeMs = 250) {
+            at(totalMs - fadeMs, () => fx.animate([{ opacity: 1 }, { opacity: 0 }], { duration: fadeMs, fill: 'forwards' }));
+            at(totalMs, resetFx);
+        }
+        const PALETTE = { A: ['#ffd23f', '#fff3b0', '#e0182d', '#ffffff', '#ff8a00'], B: ['#ffffff', '#e0182d', '#ffd23f', '#ff4d6d'] };
+        const PIX = { k: '#2a1406', b: '#8a4b1c', d: '#5c3010', g: '#ffd23f', y: '#fff3a0', o: '#b37400' };
+        const CHEST_LID_PX = ['..kkkkkkkkkkkk..', '.kbbgbbbbbbgbbk.', 'kbbbgbbbbbbgbbbk', 'kbbbgbbbbbbgbbbk', 'kdddgddddddgdddk', 'kyyyyyyyyyyyyyyk', 'kooooooooooooook'];
+        const CHEST_BODY_PX = ['kbbbgbbkkbbgbbbk', 'kbbbgbkyykbgbbbk', 'kbbbgbkookbgbbbk', 'kdddgddkkddgdddk', 'kbbbgbbbbbbgbbbk', 'kbbbgbbbbbbgbbbk', 'kdddgddddddgdddk', 'kyyyyyyyyyyyyyyk', 'kkkkkkkkkkkkkkkk'];
+        const ITEM_SYMBOLS = [['★', '#ffd23f'], ['♥', '#ff4d6d'], ['♦', '#4dd2ff'], ['♣', '#6dff7a'], ['●', '#ff9d00'], ['▲', '#c77dff'], ['✚', '#ff5252'], ['◆', '#fff3a0']];
+    
+        function shake(px = 12, ms = 400) {
+            const n = 12, kf = [];
+            for (let i = 0; i < n; i++) { const k = 1 - i / n; kf.push({ transform: `translate(${rand(-1, 1) * px * k}px, ${rand(-1, 1) * px * k}px)` }); }
+            kf.push({ transform: 'translate(0,0)' });
+            [document.getElementById('main-game'), fx].forEach(t => { if (t) t.animate(kf, { duration: ms }); });
+        }
+    
+        function flash(color = '#fff', ms = 220, peak = 1) {
+            const f = mk('div', 'fx-flash', fx, { background: color });
+            f.animate([{ opacity: peak }, { opacity: 0 }], { duration: ms, easing: 'ease-out', fill: 'forwards' }).onfinish = () => f.remove();
+        }
+    
+        function ring(parent = fx, ms = 600, size = 220) {
+            const r = mk('div', 'fx-ring', parent);
+            r.animate([{ transform: 'scale(.2)', opacity: 1, borderWidth: '10px' }, { transform: `scale(${size / 4})`, opacity: 0, borderWidth: '0px' }],
+                { duration: ms, easing: 'cubic-bezier(.1,.7,.3,1)', fill: 'forwards' }).onfinish = () => r.remove();
+        }
+    
+        function confettiCannons(palette, count = 80) {
+            const W = innerWidth, H = innerHeight;
+            for (let i = 0; i < count; i++) {
+                const side = i % 2 ? 1 : -1;
                 const p = document.createElement('div');
-                p.className = 'hades-fire-particle';
-                const size = 26 + Math.random() * 70; // 根本付近は大きめ、上に行くほど小さくなるよう後で縮小もかける
-                const startX = Math.random() * 100;
-                const riseHeight = 55 + Math.random() * 35; // 画面高さに対する割合(vh)
-                const duration = 900 + Math.random() * 900;
-                const drift = (Math.random() - 0.5) * 90; // 上昇中の左右の揺れ幅
-                const color = colors[Math.floor(Math.random() * colors.length)];
-
-                p.style.width = size + 'px';
-                p.style.height = size + 'px';
-                p.style.left = startX + '%';
-                p.style.background = `radial-gradient(circle, ${color} 0%, ${color} 25%, transparent 72%)`;
-                p.style.opacity = '0.95';
-                p.style.transform = 'translate(0, 0) scale(1)';
-                p.style.transition = `transform ${duration}ms cubic-bezier(.2,.6,.4,1), opacity ${duration}ms ease-in`;
-                container.appendChild(p);
-
-                // 次のフレームでゴールの見た目に遷移させることでアニメーションを発火させる
-                requestAnimationFrame(() => {
-                    p.style.transform = `translate(${drift}px, -${riseHeight}vh) scale(${0.15 + Math.random() * 0.25})`;
-                    p.style.opacity = '0';
-                });
-
-                setTimeout(() => p.remove(), duration + 120);
+                p.className = 'fx-confetti';
+                const ribbon = Math.random() < .3;
+                const w = ribbon ? rand(4, 6) : rand(7, 12), h = ribbon ? rand(16, 24) : rand(5, 10);
+                Object.assign(p.style, { width: w + 'px', height: h + 'px', background: palette[Math.floor(Math.random() * palette.length)], borderRadius: ribbon ? '2px' : '1px' });
+                document.body.appendChild(p);
+                const x0 = side < 0 ? -10 : W + 10, y0 = H + 10;
+                const vx = -side * rand(.25, .75) * W, vy = -rand(.9, 1.35) * H;
+                const dur = rand(2300, 3300), g = 2.6 * H, steps = 8, kf = [];
+                const spinX = rand(540, 1260) * (Math.random() < .5 ? -1 : 1), spinZ = rand(180, 540);
+                for (let s = 0; s <= steps; s++) {
+                    const t = s / steps, ts = t * 1.15;
+                    const x = x0 + vx * ts * (1 - ts * .35) + Math.sin(t * 9 + i) * 18 * t;
+                    const y = y0 + vy * ts + .5 * g * ts * ts;
+                    kf.push({ transform: `translate(${x}px, ${y}px) rotateX(${spinX * t}deg) rotateZ(${spinZ * t}deg)`, opacity: t > .8 ? (1 - t) * 5 : 1 });
+                }
+                p.animate(kf, { duration: dur, delay: rand(0, 160), easing: 'linear', fill: 'both' }).onfinish = () => p.remove();
             }
-        }, 70);
-    }
-
-    function stopFireParticles() {
-        if (hadesFireInterval) {
-            clearInterval(hadesFireInterval);
-            hadesFireInterval = null;
         }
-        const container = document.getElementById('hades-fire-bg');
-        if (container) {
-            container.querySelectorAll('.hades-fire-particle').forEach(el => el.remove());
-        }
-    }
-
-    // ★追加：新演出「宝箱大当たり」。宝箱が落ちてきて開き、チャ・ン・ス・タイ・ムが飛び出す豪華な演出
-    function playChestBurstEffect() {
-        const overlay = document.getElementById('chest-effect-overlay');
-        const chestGraphic = document.getElementById('chest-graphic');
-        const chestLid = document.getElementById('chest-lid');
-        const lightBurst = document.getElementById('chest-light-burst');
-        const rays = document.getElementById('chest-rays');
-        const beams = document.querySelectorAll('#chest-beam-container .chest-beam');
-        const letters = document.querySelectorAll('#chest-letters .chest-letter');
-        const finalText = document.getElementById('chest-final-text');
-        if (!overlay || !chestGraphic || !chestLid) return;
-
-        // 状態を初期化
-        overlay.style.display = 'flex';
-        chestGraphic.classList.remove('drop', 'shake');
-        chestLid.classList.remove('open');
-        lightBurst.classList.remove('play');
-        rays.classList.remove('play');
-        beams.forEach(el => el.classList.remove('play'));
-        finalText.classList.remove('play');
-        letters.forEach(el => el.classList.remove('pop'));
-        void chestGraphic.offsetWidth;
-
-        try { if (player && player.pauseVideo) player.pauseVideo(); } catch (e) {}
-
-        // ★Step1：宝箱が上からゆっくり落ちてくる（2.2秒かけて着地）
-        chestGraphic.classList.add('drop');
-
-        // ★Step2：着地の衝撃音＋揺れ（落下アニメーションの終わり付近）
-        setTimeout(() => {
-            playChestThudSound();
-            chestGraphic.classList.add('shake');
-        }, 2100);
-
-        // ★Step3：少し溜めてから、ふたがパカッと開く
-        setTimeout(() => {
-            playChestOpenSound();
-            chestLid.classList.add('open');
-
-            // ★Step4：開いた瞬間、まず打ち上げ花火が上がる
-            if (typeof triggerFireworkBurst === 'function') {
-                triggerFireworkBurst(50, 50);
-                setTimeout(() => triggerFireworkBurst(38, 45), 200);
-                setTimeout(() => triggerFireworkBurst(62, 42), 380);
-            }
-            lightBurst.classList.remove('play'); void lightBurst.offsetWidth; lightBurst.classList.add('play');
-        }, 2600);
-
-        // ★Step5：花火の直後、宝箱から3本の光の線が扇状に伸びる
-        setTimeout(() => {
-            rays.classList.remove('play'); void rays.offsetWidth; rays.classList.add('play');
-            beams.forEach(el => { el.classList.remove('play'); void el.offsetWidth; el.classList.add('play'); });
-        }, 3000);
-
-        // ★Step6：光の線に乗るように、チャ・ン・ス・タイ・ムが1文字ずつ弾け飛んで登場
-        letters.forEach((el, i) => {
-            setTimeout(() => {
-                el.classList.add('pop');
-            }, 3500 + i * 260);
-        });
-
-        // ★Step7：全部揃ったら、大きく「チャンスタイム！！」＋紙吹雪連打
-        setTimeout(() => {
-            finalText.classList.remove('play'); void finalText.offsetWidth; finalText.classList.add('play');
-            if (typeof triggerConfetti === 'function') {
-                triggerConfetti();
-                setTimeout(() => triggerConfetti(), 300);
-                setTimeout(() => triggerConfetti(), 650);
-            }
-        }, 5000);
-
-        // ★Step8：演出終了、通常画面へ
-        setTimeout(() => {
-            overlay.style.display = 'none';
-            chestGraphic.classList.remove('drop', 'shake');
-            chestLid.classList.remove('open');
-            lightBurst.classList.remove('play');
-            rays.classList.remove('play');
-            beams.forEach(el => el.classList.remove('play'));
-            letters.forEach(el => el.classList.remove('pop'));
-            finalText.classList.remove('play');
-        }, 7200);
-    }
-
-    // ★追加：打ち上げ花火のようなパーティクル爆発を発生させる（宝箱が開いた瞬間に使用）
-    function triggerFireworkBurst(xPercent, yPercent) {
-        const colors = ['#ff1744', '#ffd600', '#00e676', '#2979ff', '#ff9100', '#e040fb', '#ffffff'];
-        const count = 45;
-        for (let i = 0; i < count; i++) {
-            const p = document.createElement('div');
-            const color = colors[Math.floor(Math.random() * colors.length)];
-            p.style.position = 'fixed';
-            p.style.left = xPercent + 'vw';
-            p.style.top = yPercent + 'vh';
-            p.style.width = '7px';
-            p.style.height = '7px';
-            p.style.borderRadius = '50%';
-            p.style.background = color;
-            p.style.boxShadow = `0 0 10px 2px ${color}`;
-            p.style.zIndex = '200010';
-            p.style.pointerEvents = 'none';
-            document.body.appendChild(p);
-
-            const angle = Math.random() * Math.PI * 2;
-            const dist = 80 + Math.random() * 220;
-            const dx = Math.cos(angle) * dist;
-            const dy = Math.sin(angle) * dist;
-            const duration = 900 + Math.random() * 400;
-            p.style.transition = `transform ${duration}ms cubic-bezier(.12,.7,.3,1), opacity ${duration}ms ease-in`;
-
-            requestAnimationFrame(() => {
-                // 外側へ弾けた後、重力で少し落ちながら消えていく
-                p.style.transform = `translate(${dx}px, ${dy + 120}px)`;
-                p.style.opacity = '0';
+    
+        function titleA(parent, withBg = true) {
+            const root = mk('div', 'tA', parent);
+            if (withBg) mk('div', withBg === 'gold' ? 'tA-bg gold' : 'tA-bg', root).animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, fill: 'forwards' });
+            const burst = mk('div', 'tA-burst', root); mk('div', 'tA-burst-spin', burst);
+            burst.animate([{ opacity: 0, transform: 'translate(-50%,-50%) scale(.15)' }, { opacity: 1, transform: 'translate(-50%,-50%) scale(1)' }],
+                { duration: 700, easing: 'cubic-bezier(.15,.85,.25,1)', fill: 'forwards' });
+            const holder = mk('div', '', root, { display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative' });
+            const word = mk('div', 'tA-word', holder);
+            ['tA-stroke', 'tA-fill', 'tA-shine'].forEach(c => { mk('span', c, word).textContent = 'チャンスタイム'; });
+            const sub = mk('div', 'tA-sub', holder); sub.innerHTML = '<span>POINT</span><b>×2</b>';
+            // 文字が奥から叩きつけられる（ぼかし→ピタッと止まる→少し跳ね返る）
+            word.animate([
+                { transform: 'scale(2.8)', opacity: 0, filter: 'blur(14px)' },
+                { opacity: 1, offset: .3 },
+                { transform: 'scale(.93)', filter: 'blur(0px)', offset: .52 },
+                { transform: 'scale(1.035)', offset: .74 },
+                { transform: 'scale(1)', opacity: 1, filter: 'blur(0px)' }
+            ], { duration: 560, easing: 'cubic-bezier(.2,.8,.25,1)', fill: 'both' });
+            at(290, () => { shake(18, 450); flash('#fff', 260, .85); ring(root, 650); });
+            sub.animate([
+                { transform: 'skewX(-12deg) translateY(50px) scale(.4)', opacity: 0 },
+                { transform: 'skewX(-12deg) translateY(-8px) scale(1.1)', opacity: 1, offset: .6 },
+                { transform: 'skewX(-12deg) translateY(0) scale(1)', opacity: 1 }
+            ], { duration: 420, delay: 420, easing: 'cubic-bezier(.2,.8,.3,1)', fill: 'both' });
+            at(560, () => shake(6, 220));
+            at(700, () => holder.classList.add('tA-breathe'));
+            // きらめき
+            at(500, () => {
+                for (let i = 0; i < 9; i++) {
+                    const s = mk('div', 'tA-star', root, { left: rand(15, 85) + '%', top: rand(30, 70) + '%', animationDelay: rand(0, 1.1) + 's', width: rand(14, 30) + 'px', height: '' });
+                    s.style.height = s.style.width;
+                }
             });
-            setTimeout(() => p.remove(), duration + 150);
+            at(300, () => confettiCannons(PALETTE.A));
+            return root;
         }
-    }
+    
+        function lightning(x0Pct, color = '#cfe6ff') {
+            const W = innerWidth, H = innerHeight;
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+            Object.assign(svg.style, { position: 'absolute', inset: '0', width: '100%', height: '100%' });
+            const bolt = (x, y, tx, ty, segs, spread) => {
+                let d = `M${x},${y}`;
+                for (let i = 1; i <= segs; i++) {
+                    const t = i / segs;
+                    const px = x + (tx - x) * t + (i < segs ? rand(-spread, spread) : 0), py = y + (ty - y) * t;
+                    d += ` L${px},${py}`;
+                }
+                return d;
+            };
+            const tx = W / 2, ty = H / 2;
+            let d = bolt(W * x0Pct, -10, tx, ty, 14, W * .05);
+            for (let b = 0; b < 3; b++) { const sy = rand(.15, .4) * H; d += ' ' + bolt(W * x0Pct + (tx - W * x0Pct) * (sy / ty), sy, W * x0Pct + rand(-.25, .25) * W, sy + rand(.15, .3) * H, 6, W * .03); }
+            svg.innerHTML = `<path d="${d}" fill="none" stroke="${color}" stroke-width="10" opacity=".35" style="filter:blur(6px)"/><path d="${d}" fill="none" stroke="#fff" stroke-width="3" stroke-linejoin="bevel"/>`;
+            fx.appendChild(svg);
+            svg.animate([{ opacity: 1 }, { opacity: .2 }, { opacity: 1 }, { opacity: .6 }, { opacity: 0 }], { duration: 380, fill: 'forwards' }).onfinish = () => svg.remove();
+        }
+    
+        function playClassic() {
+            startFx();
+            pauseGameVideo();
+            playPichunSound();
+            const black = mk('div', 'fx-black');
+            black.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 60, fill: 'forwards' });
+            // プチュン：白い光が縦に潰れて線になり、点になって消える
+            const line = mk('div', 'fx-tvline');
+            line.animate([
+                { transform: 'translateY(-50%) scale(1, 1)', opacity: 1 },
+                { transform: 'translateY(-50%) scale(1, .004)', opacity: 1, offset: .5 },
+                { transform: 'translateY(-50%) scale(1.04, .004)', opacity: 1, offset: .62 },
+                { transform: 'translateY(-50%) scale(.004, .004)', opacity: 1, offset: .92 },
+                { transform: 'translateY(-50%) scale(0, 0)', opacity: 0 }
+            ], { duration: 560, easing: 'cubic-bezier(.7,0,.84,0)', fill: 'forwards' });
+            at(500, () => {
+                const dot = mk('div', 'fx-tvdot');
+                dot.animate([{ transform: 'scale(1)', opacity: 1 }, { transform: 'scale(1.5)', opacity: .9, offset: .3 }, { transform: 'scale(0)', opacity: 0 }], { duration: 520, easing: 'ease-in', fill: 'forwards' });
+            });
+            // 無音の暗闇（何も起きない時間が一番ドキドキする）
+            // → 中央にかすかな金の光が灯り、ゆっくり強くなる
+            at(1700, () => {
+                const glow = mk('div', 'fx-godglow');
+                glow.animate([{ transform: 'scale(0)', opacity: 0 }, { transform: 'scale(.35)', opacity: .7, offset: .4 }, { transform: 'scale(1)', opacity: 1 }], { duration: 1200, easing: 'ease-in', fill: 'forwards' });
+                const glint = mk('div', 'fx-godglint');
+                glint.animate([{ transform: 'scale(0) rotate(0deg)', opacity: 0 }, { transform: 'scale(1) rotate(90deg)', opacity: 1 }], { duration: 1200, easing: 'ease-in', fill: 'forwards' });
+            });
+            // 落雷 3連発
+            [[2900, .2], [3150, .82], [3380, .5]].forEach(([t, x], i) => at(t, () => {
+                lightning(x);
+                flash(i === 2 ? '#fff' : '#bcd8ff', i === 2 ? 500 : 180, i === 2 ? 1 : .7);
+                shake(i === 2 ? 22 : 9, i === 2 ? 600 : 250);
+            }));
+            // 黄金の紋章が回転しながら現れる
+            at(3380, () => {
+                fx.querySelectorAll('.fx-godglow, .fx-godglint').forEach(e => e.remove());
+                const bg = mk('div', 'fx-godbg');
+                bg.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, fill: 'forwards' });
+                const rays = mk('div', 'tA-burst'); mk('div', 'tA-burst-spin', rays);
+                rays.animate([{ opacity: 0, transform: 'translate(-50%,-50%) scale(.2)' }, { opacity: 1, transform: 'translate(-50%,-50%) scale(1)' }], { duration: 900, easing: 'cubic-bezier(.15,.85,.25,1)', fill: 'forwards' });
+                const em = mk('div', 'fx-emblem');
+                em.innerHTML = `<div class="fx-emblem-ring"></div><div class="fx-emblem-face"><span>×2</span></div>`;
+                em.animate([
+                    { transform: 'translate(-50%,-50%) scale(.2) rotateY(720deg)', opacity: 0, filter: 'brightness(3)' },
+                    { opacity: 1, offset: .2 },
+                    { transform: 'translate(-50%,-50%) scale(1.08) rotateY(0deg)', filter: 'brightness(1.4)', offset: .8 },
+                    { transform: 'translate(-50%,-50%) scale(1) rotateY(0deg)', opacity: 1, filter: 'brightness(1)' }
+                ], { duration: 1300, easing: 'cubic-bezier(.2,.7,.3,1)', fill: 'forwards' });
+                at(1250, () => { shake(10, 350); ring(fx, 700, 260); });
+                at(1300, () => em.classList.add('fx-emblem-idle'));
+                // 金の粒が舞う
+                every(60, () => {
+                    const p = mk('div', 'fx-goldmote', fx, { left: rand(0, 100) + '%', top: rand(20, 100) + '%' });
+                    p.animate([{ transform: 'translateY(0) scale(0)', opacity: 0 }, { transform: `translateY(-40px) scale(1)`, opacity: 1, offset: .3 }, { transform: `translateY(-140px) scale(0)`, opacity: 0 }],
+                        { duration: rand(1200, 2000), fill: 'forwards' }).onfinish = () => p.remove();
+                });
+            });
+            // 紋章が光って弾け、「チャンスタイム」へ
+            at(5300, () => {
+                const em = fx.querySelector('.fx-emblem');
+                em.animate([{ transform: 'translate(-50%,-50%) scale(1)', opacity: 1, filter: 'brightness(1)' }, { transform: 'translate(-50%,-50%) scale(2.4)', opacity: 0, filter: 'brightness(4)' }], { duration: 350, easing: 'ease-in', fill: 'forwards' });
+            });
+            at(5600, () => { flash('#fff', 360, 1); titleA(fx, 'gold'); });
+            endFx(8000);
+        }
+    
+        function playFreeze() {
+            startFx();
+            const roundEl = document.getElementById('round-text'), readyEl = document.getElementById('ready-text');
+            const cover = document.getElementById('video-cover');
+            [roundEl, readyEl].forEach(el => { if (!el) return; el.setAttribute('data-text', el.textContent); el.classList.add('gl'); });
+            at(1200, () => { [roundEl, readyEl].forEach(el => el && el.classList.add('gl-hard')); shake(4, 200); });
+            at(1500, () => every(90, () => {
+                if (!cover) return;
+                const r = cover.getBoundingClientRect();
+                const b = mk('div', 'fx-glbar', fx, { top: rand(r.top, r.bottom) + 'px', height: rand(2, 18) + 'px',
+                    background: Math.random() < .5 ? 'rgba(255,40,80,.35)' : 'rgba(40,240,255,.3)', transform: `translateX(${rand(-40, 40)}px)` });
+                setTimeout(() => b.remove(), 110);
+            }));
+            [1850, 2280].forEach(t => at(t, () => { const k = mk('div', 'fx-black'); setTimeout(() => k.remove(), 70); }));
+            at(2500, () => {
+                intervals.forEach(clearInterval); intervals = [];
+                fx.querySelectorAll('.fx-glbar').forEach(e => e.remove());
+                [roundEl, readyEl].forEach(el => el && el.classList.remove('gl', 'gl-hard'));
+                playGlassBreakSound();
+                pauseGameVideo();
+                if (cover) shatter(cover);
+            });
+            at(3000, () => startFire());
+            let band;
+            at(3400, () => { band = buildZenBand(); });
+            at(3500, () => spinZen(band, 4500));
+            // 止まった！
+            at(8000, () => {
+                flash('#fff', 420, 1);
+                shake(24, 650);
+                ring(fx, 750, 320);
+                band.querySelector('.fx-zen-glow').animate([{ opacity: 1 }, { opacity: .3 }], { duration: 900, fill: 'forwards' });
+                band.animate([{ transform: 'translateY(-50%) scale(1.06)' }, { transform: 'translateY(-50%) scale(1)' }], { duration: 400, easing: 'cubic-bezier(.2,.8,.3,1)', fill: 'forwards' });
+            });
+            at(9200, () => {
+                band.animate([{ opacity: 1 }, { opacity: .2 }], { duration: 400, fill: 'forwards' });
+                flash('#fff', 300, 1);
+                titleA(fx, false);
+            });
+            endFx(11300);
+        }
+    
+        function buildZenBand() {
+            const band = mk('div', 'fx-zen-band');
+            mk('div', 'fx-reel-strip', band);
+            mk('div', 'fx-zen-glow', band);
+            band.animate([{ opacity: 0, transform: 'translateY(-50%) scaleY(0)' }, { opacity: 1, transform: 'translateY(-50%) scaleY(1)' }],
+                { duration: 280, easing: 'cubic-bezier(.2,.8,.3,1)', fill: 'forwards' });
+            return band;
+        }
+    
+        function spinZen(band, duration) {
+            const strip = band.querySelector('.fx-reel-strip');
+            const h = band.clientHeight, W = band.clientWidth;
+            const pool = ['地獄', '業火', '冥王', '通常', 'ハズレ', '残念', '覚醒', '終焉', '降臨', '絶望'];
+            const words = [];
+            for (let k = 0; k < 20; k++) words.push(pool[(k * 7 + Math.floor(rand(0, 3))) % pool.length]);
+            words.push('冥王', 'ハズレ', '覚醒', '通常', 'チャンス', 'ハズレ'); // 最後の「ハズレ」は止まる瞬間にチラ見えする用
+            const stopIdx = words.length - 2;
+            strip.innerHTML = words.map((w, k) => {
+                const fs = Math.min(h * .55, W / (w.length * 1.15));
+                return `<div class="fx-zen-frame" style="height:${h}px"><div class="fx-zen-art${k === stopIdx ? ' win' : ' dim'}" style="width:100%;left:0;height:${h}px;font-size:${fs}px">${w}</div></div>`;
+            }).join('');
+            const end = h * stopIdx;
+            // 加速 → 高速回転（ブレ） → 減速して1文字ずつ見える → 少し行き過ぎて（次の文字がチラッ）戻って止まる
+            strip.animate([
+                { transform: 'translateY(0)', filter: 'blur(0px)', easing: 'cubic-bezier(.6,0,1,1)' },
+                { transform: `translateY(${-h * 1.5}px)`, filter: 'blur(6px)', offset: .09, easing: 'linear' },
+                { transform: `translateY(${-h * 15}px)`, filter: 'blur(6px)', offset: .38, easing: 'cubic-bezier(.3,.35,.55,1)' },
+                { transform: `translateY(${-end - h * .18}px)`, filter: 'blur(0px)', offset: .93, easing: 'cubic-bezier(.3,0,.3,1)' },
+                { transform: `translateY(${-end}px)`, filter: 'blur(0px)' }
+            ], { duration, fill: 'forwards' });
+            // ゆっくり流れている間、ドクンと脈打つ（だんだん強く）
+            [2300, 2900, 3450, 3900].forEach((t, i) => at(t, () => {
+                shake(3 + i * 2, 180);
+                const v = mk('div', 'fx-layer', fx, { background: 'radial-gradient(ellipse at center, transparent 35%, rgba(255,40,0,.6) 100%)' });
+                v.animate([{ opacity: 0 }, { opacity: 1, offset: .25 }, { opacity: 0 }], { duration: 300, fill: 'forwards' }).onfinish = () => v.remove();
+            }));
+        }
+    
+        function shatter(target) {
+            const r = target.getBoundingClientRect();
+            const box = { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' };
+            // 割れ目の形（中心から放射状＋同心円状に区切る）
+            const N = 9, rings = [0, .16, .42, 1.5];
+            const angles = []; for (let i = 0; i < N; i++) angles.push((i + rand(-.3, .3)) / N * Math.PI * 2);
+            const V = rings.map((rr, j) => angles.map(a => {
+                const rj = j === 0 ? 0 : rr * rand(.85, 1.15);
+                return [50 + Math.cos(a) * rj * 100, 50 + Math.sin(a) * rj * 100 * (r.width / r.height) * .9];
+            }));
+            // ひび
+            const crack = mk('div', 'fx-crack', fx, box);
+            let d = '';
+            for (let i = 0; i < N; i++) {
+                d += `M${V[0][i]} ` + [1, 2, 3].map(j => `L${V[j][i][0]},${V[j][i][1]}`).join(' ') + ' ';
+                [1, 2].forEach(j => { const n = (i + 1) % N; d += `M${V[j][i][0]},${V[j][i][1]} L${V[j][n][0]},${V[j][n][1]} `; });
+            }
+            crack.innerHTML = `<svg viewBox="0 0 100 100" preserveAspectRatio="none"><path d="${d}"/></svg>`;
+            crack.animate([{ clipPath: 'circle(0% at 50% 50%)' }, { clipPath: 'circle(80% at 50% 50%)' }], { duration: 120, easing: 'ease-out', fill: 'forwards' });
+            shake(5, 140);
+    
+            at(150, () => {
+                // 割れた破片：READY? 画面のコピーを破片の形に切り抜いて飛ばす
+                const behind = mk('div', 'fx-black');
+                behind.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 40, fill: 'forwards' });
+                const shards = mk('div', 'fx-shards', fx, box);
+                target.style.visibility = 'hidden';
+                crack.remove();
+                for (let j = 0; j < 3; j++) for (let i = 0; i < N; i++) {
+                    const n = (i + 1) % N;
+                    const pts = j === 0 ? [V[0][i], V[1][i], V[1][n]] : [V[j][i], V[j + 1][i], V[j + 1][n], V[j][n]];
+                    const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length, cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+                    const s = mk('div', 'fx-shard', shards, { clipPath: `polygon(${pts.map(p => p[0] + '% ' + p[1] + '%').join(',')})`, transformOrigin: `${cx}% ${cy}%` });
+                    const clone = target.cloneNode(true); clone.removeAttribute('id'); clone.querySelectorAll('[id]').forEach(e => e.removeAttribute('id'));
+                    clone.style.visibility = 'visible'; clone.classList.add('clone');
+                    s.appendChild(clone);
+                    mk('div', 'glare', s, { background: `linear-gradient(${rand(0, 360)}deg, rgba(255,255,255,.35), transparent 40%, rgba(180,220,255,.15))` });
+                    const dx = (cx - 50) * rand(6, 12) * (j + 1) * .6, dy = (cy - 50) * rand(6, 12) * (j + 1) * .6;
+                    s.animate([
+                        { transform: 'translate3d(0,0,0) rotate3d(1,1,0,0deg)', opacity: 1 },
+                        { transform: `translate3d(${dx * .15}px, ${dy * .15}px, ${rand(40, 120)}px) rotate3d(${rand(-1, 1)},${rand(-1, 1)},${rand(-.3, .3)},${rand(10, 25)}deg)`, opacity: 1, offset: .15 },
+                        { transform: `translate3d(${dx}px, ${dy + rand(60, 160)}px, ${rand(250, 600)}px) rotate3d(${rand(-1, 1)},${rand(-1, 1)},${rand(-.5, .5)},${rand(90, 260)}deg)`, opacity: 0 }
+                    ], { duration: rand(750, 1050), easing: 'cubic-bezier(.2,.6,.35,1)', fill: 'forwards' });
+                }
+                flash('#fff', 380, 1);
+                ring(fx, 650, 300);
+                shake(20, 550);
+            });
+        }
+    
+        function startFire() {
+            const fire = mk('div', 'fx-fire');
+            fire.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 500, fill: 'forwards' });
+            for (let i = 0; i < 7; i++) {
+                mk('div', 'fx-flame', fire, { left: (i / 6 * 100) + '%', animationDuration: rand(.5, .9) + 's', animationDelay: -rand(0, 1) + 's', height: rand(55, 85) + 'vh' });
+            }
+            mk('div', 'fx-heat', fire);
+            // 火の粉：小さく鋭い光の粒が揺れながら上っていく
+            every(45, () => {
+                const e = mk('div', 'fx-ember', fire, { left: rand(0, 100) + '%' });
+                const H = innerHeight * rand(.5, 1.05), sway = rand(-60, 60), dur = rand(1300, 2400);
+                e.animate([
+                    { transform: 'translate(0,0) scale(1)', opacity: 0 },
+                    { opacity: 1, offset: .1 },
+                    { transform: `translate(${sway}px, ${-H * .5}px) scale(.8)`, offset: .5 },
+                    { transform: `translate(${-sway * .5}px, ${-H}px) scale(.3)`, opacity: 0 }
+                ], { duration: dur, easing: 'ease-out', fill: 'forwards' }).onfinish = () => e.remove();
+            });
+        }
+    
+        function pixelSvg(rows) {
+            let r = '';
+            rows.forEach((row, y) => [...row].forEach((c, x) => { if (PIX[c]) r += `<rect x="${x}" y="${y}" width="1.02" height="1.02" fill="${PIX[c]}"/>`; }));
+            return `<svg viewBox="0 0 16 ${rows.length}" shape-rendering="crispEdges">${r}</svg>`;
+        }
+    
+        function playChest() {
+            startFx();
+            pauseGameVideo();
+            const bg = mk('div', 'fx-vsbg');
+            bg.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, fill: 'forwards' });
+            const rays = mk('div', 'fx-vsrays'); mk('div', 'fx-vsrays-spin', rays);
+            const chest = mk('div', 'fx-pxchest');
+            const lid = mk('div', 'fx-pxlid', chest); lid.innerHTML = pixelSvg(CHEST_LID_PX);
+            const body = mk('div', 'fx-pxbody', chest); body.innerHTML = pixelSvg(CHEST_BODY_PX);
+            const leak = mk('div', 'fx-pxleak', chest);
+    
+            // 宝箱が上から落ちてきて、ポンポンと弾む
+            chest.animate([
+                { transform: 'translate(-50%, -80vh)', easing: 'cubic-bezier(.5,0,1,.5)' },
+                { transform: 'translate(-50%, 0)', offset: .55, easing: 'cubic-bezier(0,.5,.5,1)' },
+                { transform: 'translate(-50%, -9vh)', offset: .75, easing: 'cubic-bezier(.5,0,1,.5)' },
+                { transform: 'translate(-50%, 0)', offset: .9, easing: 'cubic-bezier(0,.5,.5,1)' },
+                { transform: 'translate(-50%, -2vh)', offset: .95 },
+                { transform: 'translate(-50%, 0)' }
+            ], { duration: 1200, fill: 'both' });
+            at(660, () => { shake(10, 250); playChestThudSound(); });
+    
+            // だんだん激しくガタガタ揺れ、隙間から光が漏れる
+            at(1300, () => {
+                chest.animate([{ rotate: '0deg' }, { rotate: '-3deg' }, { rotate: '3deg' }, { rotate: '0deg' }], { duration: 160, iterations: 4 });
+                leak.animate([{ opacity: 0 }, { opacity: .6 }], { duration: 640, fill: 'forwards' });
+            });
+            at(1950, () => {
+                chest.animate([{ rotate: '0deg', translate: '0 0' }, { rotate: '-6deg', translate: '0 -1vh' }, { rotate: '6deg', translate: '0 0' }, { rotate: '0deg', translate: '0 0' }], { duration: 110, iterations: 6 });
+                leak.animate([{ opacity: .6 }, { opacity: 1 }], { duration: 600, fill: 'forwards' });
+                shake(4, 600);
+            });
+    
+            // パカーン！ ふたが吹っ飛び、虹色の光があふれる
+            at(2600, () => {
+                playChestOpenSound();
+                lid.animate([{ transform: 'translateY(0) rotate(0deg)' }, { transform: 'translateY(-160%) rotate(-14deg)', offset: .35 }, { transform: 'translateY(-130%) rotate(-10deg)' }],
+                    { duration: 700, easing: 'cubic-bezier(.2,.8,.3,1)', fill: 'forwards' });
+                leak.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, fill: 'forwards' });
+                flash('#fff', 450, 1);
+                shake(14, 450);
+                rays.animate([{ opacity: 0, transform: 'translate(-50%,-50%) scale(.1)' }, { opacity: 1, transform: 'translate(-50%,-50%) scale(1)' }], { duration: 900, easing: 'cubic-bezier(.15,.85,.25,1)', fill: 'forwards' });
+                const cr = body.getBoundingClientRect();
+                const pillar = mk('div', 'fx-pillar');
+                fx.insertBefore(pillar, chest);
+                pillar.style.bottom = (innerHeight - cr.top) + 'px';
+                pillar.animate([{ height: '0px', width: '20px' }, { height: cr.top + 'px', width: cr.width * .8 + 'px', offset: .35 }, { height: cr.top + 'px', width: cr.width * .6 + 'px' }],
+                    { duration: 1200, easing: 'cubic-bezier(.15,.8,.3,1)', fill: 'forwards' });
+                // 金貨が噴き出し続ける
+                every(70, () => {
+                    const c = mk('div', 'fx-coin fx-pxcoin', fx, { left: (cr.left + cr.width / 2 - 8) + 'px', top: (cr.top - 8) + 'px' });
+                    const vx = rand(-1, 1) * innerWidth * .4, vy = -rand(.4, .8) * innerHeight, g = 1.9 * innerHeight, kf = [];
+                    for (let s = 0; s <= 8; s++) { const t = s / 8; kf.push({ transform: `translate(${vx * t}px, ${vy * t + .5 * g * t * t}px) scaleX(${Math.cos(t * 16)})`, opacity: t > .85 ? (1 - t) * 6 : 1 }); }
+                    c.animate(kf, { duration: rand(1200, 1700), fill: 'both' }).onfinish = () => c.remove();
+                });
+                // 花火があちこちで上がる
+                every(520, () => pixelFirework(rand(.15, .85) * innerWidth, rand(.1, .45) * innerHeight));
+                // 金貨カウンター
+                const counter = mk('div', 'fx-vscounter'); counter.innerHTML = '<small>GOLD</small> <span>0</span>';
+                counter.animate([{ transform: 'translateX(-50%) translateY(30px)', opacity: 0 }, { transform: 'translateX(-50%) translateY(0)', opacity: 1 }], { duration: 300, fill: 'forwards' });
+                const num = counter.querySelector('span');
+                const t0 = performance.now();
+                every(40, () => { const t = Math.min(1, (performance.now() - t0) / 4400); num.textContent = Math.floor(2222 * (1 - Math.pow(1 - t, 2))).toLocaleString(); });
+            });
+    
+            // 5つの枠がスロットのように回り、1つずつ当たっていく
+            const parts = ['チャ', 'ン', 'ス', 'タイ', 'ム'];
+            at(2900, () => {
+                const row = mk('div', 'fx-vsslots');
+                parts.forEach((p, i) => {
+                    const slot = mk('div', 'fx-vsslot', row);
+                    const inner = mk('div', 'fx-vsslot-in', slot);
+                    slot.animate([{ transform: 'scale(0)', opacity: 0 }, { transform: 'scale(1.15)', opacity: 1, offset: .7 }, { transform: 'scale(1)', opacity: 1 }], { duration: 300, delay: i * 70, easing: 'ease-out', fill: 'both' });
+                    // 記号が高速で切り替わる
+                    const spin = setInterval(() => {
+                        const [s, c] = ITEM_SYMBOLS[Math.floor(Math.random() * ITEM_SYMBOLS.length)];
+                        inner.textContent = s; inner.style.color = c;
+                    }, 55);
+                    intervals.push(spin);
+                    at(900 + i * 600, () => {
+                        clearInterval(spin);
+                        inner.textContent = p; inner.style.color = '';
+                        inner.className = 'fx-vsslot-in hit' + (p.length > 1 ? ' two' : '');
+                        slot.classList.add('hit');
+                        slot.animate([{ transform: 'scale(1.35)' }, { transform: 'scale(.95)', offset: .6 }, { transform: 'scale(1)' }], { duration: 300, easing: 'ease-out' });
+                        const sr = slot.getBoundingClientRect();
+                        pixelFirework(sr.left + sr.width / 2, sr.top + sr.height / 2, 16, 90);
+                        shake(i === 4 ? 12 : 5, i === 4 ? 350 : 180);
+                    });
+                });
+            });
+    
+            // 決め
+            at(6700, () => fx.querySelectorAll('.fx-vsslot').forEach((s, i) => s.animate([{ transform: 'translateY(0)' }, { transform: 'translateY(-14px)' }, { transform: 'translateY(0)' }], { duration: 300, delay: i * 60 })));
+            at(7400, () => {
+                fx.querySelector('.fx-vsslots').animate([{ opacity: 1, transform: 'translateX(-50%) scale(1)' }, { opacity: 0, transform: 'translateX(-50%) scale(1.3)' }], { duration: 250, fill: 'forwards' });
+                chest.animate([{ opacity: 1 }, { opacity: .3 }], { duration: 400, fill: 'forwards' });
+                flash('#fff', 350, 1);
+                titleA(fx, false);
+            });
+            endFx(11000);
+        }
+    
+        function pixelFirework(x, y, count = 24, dist = 160) {
+            const col = ['#ff4d6d', '#ffd23f', '#4dd2ff', '#6dff7a', '#c77dff', '#ffffff'][Math.floor(Math.random() * 6)];
+            for (let i = 0; i < count; i++) {
+                const p = mk('div', 'fx-pxspark', fx, { left: x + 'px', top: y + 'px', background: col, boxShadow: `0 0 6px ${col}` });
+                const a = i / count * Math.PI * 2 + rand(-.1, .1), d = dist * rand(.6, 1.1);
+                p.animate([{ transform: 'translate(0,0)', opacity: 1 }, { transform: `translate(${Math.cos(a) * d}px, ${Math.sin(a) * d}px)`, opacity: 1, offset: .6 }, { transform: `translate(${Math.cos(a) * d}px, ${Math.sin(a) * d + 50}px)`, opacity: 0 }],
+                    { duration: rand(800, 1100), easing: 'cubic-bezier(.1,.7,.3,1)', fill: 'forwards' }).onfinish = () => p.remove();
+            }
+        }
+    
+    
+        return { playClassic, playFreeze, playChest };
+    })();
 
     // ★追加：宝箱が着地する時のドスンという効果音
     let chestSfxAudioContext = null;
@@ -3662,11 +3590,11 @@ window.onYouTubeIframeAPIReady = () => {
     // ★修正：受信したチャンスタイム演出IDに応じて、対応する演出を再生する（全クライアント共通）
     function playChanceTimeEffect(effectId) {
         if (effectId === 'hades_freeze') {
-            playHadesFreezeEffect();
+            ChanceFx.playFreeze();
         } else if (effectId === 'chest_burst') {
-            playChestBurstEffect();
+            ChanceFx.playChest();
         } else {
-            playClassicChanceEffect();
+            ChanceFx.playClassic();
         }
     }
 
@@ -3684,11 +3612,12 @@ window.onYouTubeIframeAPIReady = () => {
                 sendSignal('chance_time_effect', effectId);
             }, 150);
         } else {
-            // ★既存演出：演出シグナルを先に送り、演出のクライマックスに合わせて次の曲を読み込む
+            // ★既存演出：演出シグナルを先に送り、演出の終わり際に次の曲を読み込む
+            // ★変更：演出が8秒に伸びたので、読み込みも遅らせる（読み込み後、いつもどおりの流れで始まる）
             await sendSignal('chance_time_effect', effectId);
             setTimeout(() => {
                 loadNextFromReserve(false, true);
-            }, 3350);
+            }, 6900);
         }
     };
 
